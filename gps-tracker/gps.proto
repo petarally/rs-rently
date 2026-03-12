@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+service GPSTracker {
+  rpc SendLocation (LocationUpdate) returns (Empty) {}
+}
+
+message LocationUpdate {
+  string car_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+}
+
+message Empty {}

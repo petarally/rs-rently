@@ -1,0 +1,84 @@
+version: "3.8"
+
+services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb,s3
+    networks:
+      - rent_network
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - rent_network
+
+  auth-service:
+    build: ./auth-service
+    ports:
+      - "8000:8000"
+    environment:
+      - DYNAMODB_URL=http://localstack:4566
+    depends_on:
+      - localstack
+    networks:
+      - rent_network
+
+  booking-service:
+    build: ./booking-service
+    ports:
+      - "8001:8000"
+    environment:
+      - REDIS_HOST=redis
+      - DYNAMODB_URL=http://localstack:4566
+    depends_on:
+      - localstack
+      - redis
+    networks:
+      - rent_network
+
+  damage-service:
+    build: ./damage-lambda
+    ports:
+      - "8002:8000"
+    environment:
+      - S3_URL=http://localstack:4566
+    depends_on:
+      - localstack
+    networks:
+      - rent_network
+
+  mail-worker:
+    build: ./mail-worker
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+    networks:
+      - rent_network
+
+  gps-tracker:
+    build: ./gps-tracker
+    ports:
+      - "50051:50051"
+    networks:
+      - rent_network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - auth-service
+      - booking-service
+      - damage-service
+    networks:
+      - rent_network
+
+networks:
+  rent_network:
+    driver: bridge

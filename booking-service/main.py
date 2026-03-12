@@ -1,0 +1,36 @@
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import redis
+import json
+import uuid
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+r = redis.Redis(host='redis', port=6379, db=0)
+
+@app.post("/bookings")
+def create_booking(car_id: str, user_email: str, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Nedostaje token")
+
+    booking_id = str(uuid.uuid4())
+    booking_data = {
+        "id": booking_id,
+        "car_id": car_id,
+        "email": user_email,
+        "status": "confirmed"
+    }
+
+    print(f"Spremam rezervaciju {booking_id} u bazu...")
+
+    r.rpush("email_queue", json.dumps(booking_data))
+
+    return {"message": "Rezervacija kreirana!", "booking_id": booking_id}
