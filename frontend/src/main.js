@@ -5,6 +5,7 @@ import Login from "./components/Login.vue";
 import Dashboard from "./components/Dashboard.vue";
 import Bookings from "./components/Bookings.vue";
 import DamageUpload from "./components/DamageUpload.vue";
+import CrashControls from "./components/CrashControls.vue";
 import * as Sentry from "@sentry/vue";
 
 const routes = [
@@ -13,6 +14,7 @@ const routes = [
   { path: "/dashboard", component: Dashboard, meta: { requiresAuth: true } },
   { path: "/bookings", component: Bookings, meta: { requiresAuth: true } },
   { path: "/damage", component: DamageUpload, meta: { requiresAuth: true } },
+  { path: "/crash", component: CrashControls, meta: { requiresAuth: true } },
 ];
 
 const router = createRouter({

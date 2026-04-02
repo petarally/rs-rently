@@ -55,3 +55,8 @@ async def upload_damage(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/__debug/crash")
+def crash():
+    raise Exception("Simulirani pad: damage-service")

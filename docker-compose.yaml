@@ -23,6 +23,8 @@ services:
       - "8000:8000"
     environment:
       - DYNAMODB_URL=http://localstack:4566
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_ENV=${SENTRY_ENV}
     depends_on:
       - localstack
     networks:
@@ -35,6 +37,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - DYNAMODB_URL=http://localstack:4566
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_ENV=${SENTRY_ENV}
     depends_on:
       - localstack
       - redis
@@ -47,6 +51,8 @@ services:
       - "8002:8000"
     environment:
       - S3_URL=http://localstack:4566
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_ENV=${SENTRY_ENV}
     depends_on:
       - localstack
     networks:
@@ -56,6 +62,8 @@ services:
     build: ./mail-worker
     environment:
       - REDIS_HOST=redis
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_ENV=${SENTRY_ENV}
     depends_on:
       - redis
     networks:
@@ -65,6 +73,9 @@ services:
     build: ./gps-tracker
     ports:
       - "50051:50051"
+    environment:
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_ENV=${SENTRY_ENV}
     networks:
       - rent_network
 

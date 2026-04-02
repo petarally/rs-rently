@@ -58,3 +58,17 @@ def create_booking(car_id: str, user_email: str, authorization: str = Header(Non
         raise HTTPException(status_code=500, detail=f"Greška pri radu s Redisom: {e}")
 
     return {"message": "Rezervacija kreirana!", "booking_id": booking_id}
+
+
+@app.get("/__debug/crash")
+def crash():
+    raise Exception("Simulirani pad: booking-service")
+
+
+@app.post("/__debug/crash-mail-worker")
+def crash_mail_worker():
+    try:
+        r.set("crash_mail_worker", "1")
+        return {"message": "Signal poslan mail-workeru"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

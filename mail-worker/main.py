@@ -25,7 +25,21 @@ print(f"[*] Mail Worker pokrenut. Čekam poruke na redu '{queue_name}'...")
 
 while True:
     try:
-        _, message_json = r.blpop(queue_name)
+        # Use a short timeout so we can periodically check for crash signal
+        item = r.blpop(queue_name, timeout=5)
+
+        # Check crash signal in Redis
+        try:
+            if r.get("crash_mail_worker"):
+                r.delete("crash_mail_worker")
+                raise Exception("Simulirani pad: mail-worker")
+        except Exception:
+            raise
+
+        if item is None:
+            continue
+
+        _, message_json = item
 
         try:
             data = json.loads(message_json)
