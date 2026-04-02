@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir fastapi uvicorn redis boto3
+RUN pip install --no-cache-dir fastapi uvicorn redis boto3 sentry-sdk
 
 COPY main.py .
 

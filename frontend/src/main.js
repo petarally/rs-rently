@@ -5,6 +5,7 @@ import Login from "./components/Login.vue";
 import Dashboard from "./components/Dashboard.vue";
 import Bookings from "./components/Bookings.vue";
 import DamageUpload from "./components/DamageUpload.vue";
+import * as Sentry from "@sentry/vue";
 
 const routes = [
   { path: "/", redirect: "/login" },
@@ -29,5 +30,18 @@ router.beforeEach((to, from, next) => {
 });
 
 const app = createApp(App);
+
+Sentry.init({
+  app,
+  dsn: import.meta.env.VITE_SENTRY_DSN, 
+  integrations: [
+    Sentry.browserTracingIntegration({ router }),
+    Sentry.replayIntegration(),
+  ],
+  tracesSampleRate: 1.0, 
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1.0,
+});
+
 app.use(router);
 app.mount("#app");

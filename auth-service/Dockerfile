@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir fastapi uvicorn PyJWT
+RUN pip install --no-cache-dir fastapi uvicorn PyJWT sentry-sdk
 
 COPY main.py .
 

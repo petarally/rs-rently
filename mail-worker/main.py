@@ -2,6 +2,21 @@ import redis
 import json
 import time
 import traceback
+import os
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    logging_integration = LoggingIntegration(level=None, event_level=None)
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        environment=os.getenv("SENTRY_ENV", "development"),
+        integrations=[logging_integration],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+        send_default_pii=True,
+    )
+except Exception:
+    pass
 
 r = redis.Redis(host='redis', port=6379, db=0)
 queue_name = "email_queue"

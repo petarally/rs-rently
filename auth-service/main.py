@@ -4,6 +4,24 @@ from pydantic import BaseModel
 import jwt
 import datetime
 from jwt import ExpiredSignatureError, InvalidTokenError
+import os
+
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    from sentry_sdk.integrations.stdlib import StdlibIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    logging_integration = LoggingIntegration(level=None, event_level=None)
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        environment=os.getenv("SENTRY_ENV", "development"),
+        integrations=[logging_integration, StdlibIntegration(), StarletteIntegration()],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+        send_default_pii=True,
+    )
+except Exception:
+    pass
 
 app = FastAPI()
 

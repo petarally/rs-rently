@@ -1,4 +1,18 @@
 import json
+import os
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.aws_lambda import AwsLambdaIntegration
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        environment=os.getenv("SENTRY_ENV", "development"),
+        integrations=[AwsLambdaIntegration()],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+        send_default_pii=True,
+    )
+except Exception:
+    pass
+
 
 def handler(event, context):
     try:
