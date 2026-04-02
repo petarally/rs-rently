@@ -24,6 +24,15 @@ const addAuthToken = (config) => {
 
 bookingAPI.interceptors.request.use(addAuthToken);
 damageAPI.interceptors.request.use(addAuthToken);
+// Basic response error interceptor to normalize/log errors
+const handleError = (error) => {
+  console.error("API error:", error);
+  return Promise.reject(error);
+};
+
+authAPI.interceptors.response.use((r) => r, handleError);
+bookingAPI.interceptors.response.use((r) => r, handleError);
+damageAPI.interceptors.response.use((r) => r, handleError);
 
 export default {
   login(username, password) {

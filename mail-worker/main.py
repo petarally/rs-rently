@@ -1,6 +1,7 @@
 import redis
 import json
 import time
+import traceback
 
 r = redis.Redis(host='redis', port=6379, db=0)
 queue_name = "email_queue"
@@ -8,13 +9,40 @@ queue_name = "email_queue"
 print(f"[*] Mail Worker pokrenut. Čekam poruke na redu '{queue_name}'...")
 
 while True:
-    _, message_json = r.blpop(queue_name)
-    
-    data = json.loads(message_json)
-    email = data.get("email")
-    car = data.get("car")
+    try:
+        _, message_json = r.blpop(queue_name)
 
-    print(f"[MAIL] Šaljem potvrdu na: {email} za vozilo: {car}")
-    
-    time.sleep(2) 
-    print(f"[OK] Mail uspješno poslan na {email}")
+        try:
+            data = json.loads(message_json)
+        except Exception as e:
+            print(f"[MAIL][ERROR] Ne mogu parsirati poruku: {e}")
+            continue
+
+        email = data.get("email")
+        car = data.get("car")
+
+        if not email:
+            print(f"[MAIL][WARN] Poruka nema email polje: {data}")
+            continue
+
+        print(f"[MAIL] Šaljem potvrdu na: {email} za vozilo: {car}")
+
+        try:
+            time.sleep(2)
+            print(f"[OK] Mail uspješno poslan na {email}")
+        except Exception as e:
+            print(f"[MAIL][ERROR] Greška pri slanju: {e}")
+            traceback.print_exc()
+            continue
+    except redis.exceptions.RedisError as re:
+        print(f"[MAIL][ERROR] Redis error: {re}")
+        time.sleep(5)
+        continue
+    except KeyboardInterrupt:
+        print("[MAIL] Mail worker zaustavljen (KeyboardInterrupt)")
+        break
+    except Exception as e:
+        print(f"[MAIL][ERROR] Neočekivana greška: {e}")
+        traceback.print_exc()
+        time.sleep(2)
+        continue

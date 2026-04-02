@@ -21,6 +21,9 @@ def create_booking(car_id: str, user_email: str, authorization: str = Header(Non
     if not authorization:
         raise HTTPException(status_code=401, detail="Nedostaje token")
 
+    if not car_id or not user_email:
+        raise HTTPException(status_code=400, detail="Neispravni podaci rezervacije")
+
     booking_id = str(uuid.uuid4())
     booking_data = {
         "id": booking_id,
@@ -31,6 +34,9 @@ def create_booking(car_id: str, user_email: str, authorization: str = Header(Non
 
     print(f"Spremam rezervaciju {booking_id} u bazu...")
 
-    r.rpush("email_queue", json.dumps(booking_data))
+    try:
+        r.rpush("email_queue", json.dumps(booking_data))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Greška pri radu s Redisom: {e}")
 
     return {"message": "Rezervacija kreirana!", "booking_id": booking_id}

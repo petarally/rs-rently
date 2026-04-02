@@ -1,7 +1,8 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
+from botocore.exceptions import BotoCoreError, ClientError
 
 app = FastAPI()
 
@@ -25,6 +26,16 @@ BUCKET_NAME = "stete-bucket"
 
 @app.post("/upload-damage")
 async def upload_damage(file: UploadFile = File(...)):
-    s3.upload_fileobj(file.file, BUCKET_NAME, file.filename)
-    
-    return {"message": f"Slika {file.filename} poslana na obradu.", "status": "pending"}
+    try:
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="Neispravan file")
+
+        s3.upload_fileobj(file.file, BUCKET_NAME, file.filename)
+
+        return {"message": f"Slika {file.filename} poslana na obradu.", "status": "pending"}
+    except (BotoCoreError, ClientError) as e:
+        raise HTTPException(status_code=502, detail=f"Greška pri uploadu na S3: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
