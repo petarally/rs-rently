@@ -17,5 +17,7 @@ node_modules/
 *.log
 **/localstack/*
 
+.claude
+
 .DS_Store
 Thumbs.db

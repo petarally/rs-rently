@@ -1,0 +1,784 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[croatian]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage[most]{tcolorbox}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usetikzlibrary{positioning, arrows.meta, shapes.multipart, fit, calc, decorations.markings}
+
+\geometry{margin=2.5cm}
+
+% ---- Colors ----
+\definecolor{codebg}{HTML}{F7F8FA}
+\definecolor{codeframe}{HTML}{D0D7DE}
+\definecolor{keyword}{HTML}{0550AE}
+\definecolor{string}{HTML}{116329}
+\definecolor{comment}{HTML}{6E7781}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{accentlight}{HTML}{DCE6F1}
+\definecolor{infoborder}{HTML}{2E86AB}
+\definecolor{infobg}{HTML}{EAF3FA}
+
+% ---- Section headers ----
+\titleformat{\section}
+  {\Large\bfseries\color{accent}}
+  {\thesection}{0.7em}{}
+  [\vspace{-0.3em}{\color{accent}\titlerule[1pt]}]
+\titleformat{\subsection}
+  {\large\bfseries\color{accent!85!black}}
+  {\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.8em}{0.9em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.5em}
+
+% ---- Paragraph spacing ----
+\setlength{\parskip}{0.6em}
+\setlength{\parindent}{0pt}
+
+% ---- Code listings ----
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=6pt,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  columns=fullflexible,
+  keywordstyle=\color{keyword}\bfseries,
+  stringstyle=\color{string},
+  commentstyle=\color{comment}\itshape,
+  showstringspaces=false,
+  captionpos=b,
+  abovecaptionskip=0.6em,
+  belowcaptionskip=0.4em,
+  literate={č}{{\v{c}}}1 {ć}{{\'{c}}}1 {š}{{\v{s}}}1 {ž}{{\v{z}}}1 {đ}{{\dj{}}}1
+           {Č}{{\v{C}}}1 {Ć}{{\'{C}}}1 {Š}{{\v{S}}}1 {Ž}{{\v{Z}}}1 {Đ}{{\DJ{}}}1
+}
+
+% ---- Info box ----
+\newtcolorbox{infobox}[1][]{
+  enhanced,
+  colback=infobg,
+  colframe=infoborder,
+  boxrule=0.4pt,
+  leftrule=3pt,
+  arc=2pt,
+  left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\color{infoborder},
+  #1
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=accent,
+  urlcolor=accent,
+  citecolor=accent,
+  pdftitle={RS-Rently -- Distribuirani rent-a-car sustav},
+  pdfauthor={Petar Ally}
+}
+
+\title{
+  \vspace{2cm}
+  {\Huge\textbf{\color{accent}RS-Rently}}\\[0.6cm]
+  {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[0.6cm]
+  {\Large Distribuirani rent-a-car sustav}\\[0.3cm]
+  {\large zasnovan na mikroservisnoj arhitekturi}\\[2.5cm]
+  {\normalsize Kolegij: Raspodijeljeni sustavi 2025./2026.}
+}
+\author{Petar Ally}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+% ========================================================================
+\section{Uvod}
+
+Suvremene web aplikacije rijetko se grade kao monolitni sustavi. Umjesto toga, složenost se razlaže na manje, samostalne cjeline -- \emph{mikroservise} -- koji komuniciraju putem jasno definiranih sučelja. Takav pristup donosi neovisnost razvoja i deploya, mogućnost skaliranja pojedinog dijela sustava te slobodu odabira tehnologije koja najbolje odgovara konkretnom zadatku.
+
+RS-Rently nastao je upravo iz te ideje. Riječ je o distribuiranom sustavu za iznajmljivanje vozila koji objedinjuje šest mikroservisa, svaki zadužen za jednu domenu: autentifikaciju, rezervacije, evidenciju šteta, slanje obavijesti, GPS praćenje i korisničko sučelje. Servisi međusobno komuniciraju putem tri različita protokola -- REST, gRPC i Redis message queue -- čime projekt demonstrira raznolikost komunikacijskih obrazaca prisutnih u stvarnim distribuiranim sustavima.
+
+Cilj projekta nije samo implementacija funkcionalne aplikacije, već i prikaz ključnih koncepata raspodijeljenih sustava: asinkrone obrade, odvajanja producenta i konzumenta poruka, kontejnerizacije, simulacije cloud infrastrukture te centraliziranog praćenja grešaka. Sustav se u cijelosti pokreće jednom \texttt{docker-compose} naredbom, a svaki servis živi u vlastitom kontejneru, s vlastitim ovisnostima i životnim ciklusom.
+
+% ========================================================================
+\section{Arhitektura sustava}
+
+Arhitektura RS-Rently slijedi mikroservisni obrazac u kojem je svaka poslovna funkcija izdvojena u zaseban proces. Servisi ne dijele ni bazu podataka ni memoriju -- jedina sprega među njima je mrežna komunikacija putem strogo definiranih API-ja. Svih šest servisa i dvije infrastrukturne komponente povezani su zajedničkom Docker mrežom \texttt{rent\_network}, unutar koje se međusobno pronalaze putem Docker DNS rezolucije.
+
+\subsection{Auth-service}
+
+Auth-service predstavlja ulaznu točku sustava za svakog korisnika. Implementiran je u FastAPI-ju i izlaže dva endpointa: \texttt{POST /login} za prijavu te \texttt{GET /verify} za provjeru valjanosti tokena. Prijava se temelji na hardkodiranim kredencijalima (\texttt{admin/admin}) što je dovoljno za demonstraciju, a u produkcijskoj varijanti zamijenilo bi se bazom korisnika. Nakon uspješne provjere, servis generira JWT token potpisan HS256 algoritmom, s rokom trajanja od jednog sata. Taj token postaje jedini dokaz identiteta -- svi ostali servisi očekuju ga u \texttt{Authorization} zaglavlju zahtjeva.
+
+\subsection{Booking-service}
+
+Booking-service prima zahtjeve za rezervaciju vozila na \texttt{POST /bookings} endpointu. Prije obrade provjerava prisutnost JWT tokena u zaglavlju te valjanost ulaznih parametara (\texttt{car\_id} i \texttt{user\_email}). Za svaku novu rezervaciju generira UUID identifikator, konstruira JSON objekt s podacima o rezervaciji i gura ga u Redis listu \texttt{email\_queue} naredbom \texttt{RPUSH}. Korisniku odmah vraća potvrdu s identifikatorom rezervacije, dok se daljnja obrada (slanje e-maila) odvija potpuno asinkrono, bez blokiranja odgovora. Ova arhitektonska odluka ključna je za responsivnost sustava -- korisnik ne čeka da se e-mail pošalje da bi dobio potvrdu.
+
+\subsection{Damage-service}
+
+Damage-service zadužen je za evidenciju oštećenja vozila putem uploada fotografija. Izlaže \texttt{POST /upload-damage} endpoint koji prima datoteku u \texttt{multipart/form-data} formatu. Primljenu datoteku pohranjuje u S3 bucket nazvan \texttt{stete-bucket}, pri čemu se koristi LocalStack kao lokalna simulacija AWS-a. Servis također sadrži zasebnu Lambda funkciju (\texttt{lambda-function.py}) koja bi na stvarnom AWS-u bila pokrenuta S3 eventom nakon svakog novog uploada -- u toj funkciji moguće je implementirati automatsku klasifikaciju štete, obavijest osiguranja ili bilo kakvu drugu obradu.
+
+\subsection{Mail-worker}
+
+Mail-worker je jedini servis koji ne izlaže nikakav API. Umjesto toga, radi kao pozadinski proces u beskonačnoj petlji, neprekidno osluškujući Redis red \texttt{email\_queue} pomoću blokirajućeg čitanja (\texttt{BLPOP}) s timeoutom od 5 sekundi. Kada poruka stigne, parsira JSON podatke, izvlači e-mail adresu i identifikator vozila te simulira slanje e-maila (u ovoj verziji to je \texttt{time.sleep(2)} s ispisom u log). Između svake iteracije provjerava i Redis ključ \texttt{crash\_mail\_worker} -- mehanizam koji omogućuje da Booking-service na zahtjev izazove simulirani pad workera, što je korisno za demonstraciju Sentry integracije.
+
+Ovaj producer-consumer obrazac osigurava otpornost sustava: čak i ako Mail-worker privremeno padne, poruke ostaju u Redis redu i bit će obrađene nakon ponovnog pokretanja. Redis pritom služi i kao prirodni buffer koji apsorbira nagle skokove u broju rezervacija.
+
+\subsection{GPS-tracker}
+
+GPS-tracker jedini je servis koji ne koristi REST, već gRPC protokol. Sučelje je definirano Protocol Buffers shemom s jednom RPC metodom \texttt{SendLocation} koja prima strukturiranu poruku \texttt{LocationUpdate} (identifikator vozila, geografska širina i dužina) i vraća praznu poruku \texttt{Empty}. Servis koristi \texttt{ThreadPoolExecutor} s 10 radnih niti, čime može paralelno obrađivati lokacijske podatke od više vozila.
+
+Izbor gRPC-a za ovaj servis motiviran je prirodom podataka: GPS koordinate su jednostavne strukturirane poruke koje se šalju u visokoj frekvenciji, a gRPC nudi značajno manje overheada od REST-a zahvaljujući binarnoj serijalizaciji Protocol Buffersa i HTTP/2 transportu.
+
+\subsection{Frontend}
+
+Frontend je izgrađen u Vue.js 3 koristeći Composition API. Aplikacija se sastoji od pet komponenti: \texttt{Login} za prijavu, \texttt{Dashboard} za pregled sustava, \texttt{Bookings} za kreiranje rezervacija, \texttt{DamageUpload} za upload slika šteta i \texttt{CrashControls} za testiranje padova servisa. Vue Router štiti zaštićene rute provjerom prisutnosti tokena u \texttt{localStorage} -- ako token ne postoji, korisnik se preusmjerava na stranicu za prijavu.
+
+Komunikacija s backendom apstrahirana je kroz centralni modul \texttt{api.js} koji kreira tri Axios instance -- po jednu za svaki REST servis. Interceptor automatski dodaje JWT token u zaglavlje svakog zahtjeva prema Booking i Damage servisima, čime se eliminira potreba za ručnim upravljanjem autentifikacijom u svakoj komponenti.
+
+U produkciji se Vue aplikacija kompajlira u statičke datoteke i servira putem Nginx-a, koji ujedno brine o SPA routingu (sve rute preusmjerava na \texttt{index.html}), GZIP kompresiji i cachiranju statičkih resursa.
+
+\subsection{Infrastruktura}
+
+Dva infrastrukturna servisa čine temelj na kojem ostali servisi grade svoju funkcionalnost. \textbf{Redis} (Alpine varijanta) služi kao message broker za asinkronu komunikaciju između Booking-servisa i Mail-workera. Booking-service piše poruke u Redis listu, a Mail-worker ih čita -- time se ostvaruje potpuno odvajanje producenta i konzumenta. \textbf{LocalStack} simulira AWS ekosustav; u \texttt{docker-compose.yaml} aktivirani su \texttt{dynamodb} i \texttt{s3} servisi, pri čemu trenutna implementacija koristi isključivo S3 (bucket \texttt{stete-bucket}) za pohranu fotografija šteta, dok je DynamoDB pripremljen kao prostor za buduće proširenje (npr. perzistencija rezervacija). Damage-service se prema S3 API-ju odnosi identično kao prema pravom AWS-u -- razlikuje se samo \texttt{endpoint\_url}.
+
+\subsection{Cross-Origin Resource Sharing}
+
+Budući da se frontend (\texttt{:3000}) i backend servisi (\texttt{:8000}, \texttt{:8001}, \texttt{:8002}) u razvojnom okruženju poslužuju s različitih portova, svaki zahtjev iz preglednika je tehnički \emph{cross-origin} prema SOP-u (Same-Origin Policy). Kako bi se izbjegle greške tipa \emph{CORS preflight failed}, svi FastAPI servisi uključuju \texttt{CORSMiddleware} s permisivnom konfiguracijom (\texttt{allow\_origins=[\textquotedbl*\textquotedbl]}). Ovakva postavka prihvatljiva je u demonstracijskom okruženju; u produkciji bi se ograničila na konkretnu domenu frontenda.
+
+% ========================================================================
+\section{Tehnologije}
+
+Svi backend servisi napisani su u \textbf{Python 3.10}. Za tri servisa koji izlažu REST API odabran je \textbf{FastAPI} -- asinkroni web framework koji uz minimalan kod pruža automatsku validaciju podataka putem Pydantic modela, automatsko generiranje OpenAPI (Swagger) dokumentacije i visoke performanse temeljene na Starlette/Uvicorn stacku. GPS-tracker koristi \textbf{gRPC} s \textbf{Protocol Buffers} definicijama sučelja, što omogućuje strogo tipiziranu, binarno serijaliziranu komunikaciju s nižim overheadom od JSON-a.
+
+Za asinkronu komunikaciju između servisa koristi se \textbf{Redis}, in-memory pohrana podataka koja ovdje funkcionira kao message broker. Pristup AWS resursima ostvaruje se putem \textbf{boto3} SDK-a, dok \textbf{LocalStack} omogućuje lokalno pokretanje S3 i DynamoDB servisa bez oblačne infrastrukture. Autentifikacija se temelji na \textbf{JWT} tokenima implementiranim pomoću \textbf{PyJWT} biblioteke.
+
+Frontend koristi \textbf{Vue.js 3} s Composition API-jem, \textbf{Vue Router} za upravljanje rutama i \textbf{Axios} kao HTTP klijent. Build proces odvija se putem \textbf{Vite} alata, a produkcijsko posluživanje preuzima \textbf{Nginx}. Svi servisi pakirani su u \textbf{Docker} kontejnere i orkestrirani putem \textbf{Docker Compose-a}. Za centralizirano praćenje grešaka integriran je \textbf{Sentry} sa StarletteIntegration na backendu i browserTracingIntegration na frontendu.
+
+% ========================================================================
+\section{Funkcionalnosti}
+
+\subsection{Autentifikacija i autorizacija}
+
+Tok autentifikacije započinje unosom korisničkog imena i lozinke na Login stranici. Frontend šalje \texttt{POST /login} zahtjev Auth-servisu koji provjerava kredencijale i, ako su ispravni, vraća JWT token s \texttt{sub} claimom (korisničko ime) i \texttt{exp} claimom (istek za 1 sat). Frontend pohranjuje token u \texttt{localStorage} i od tog trenutka ga automatski uključuje u svaki zahtjev prema zaštićenim servisima putem Axios interceptora. Vue Router dodatno štiti zaštićene rute -- navigation guard provjerava prisutnost tokena prije svakog prijelaza na zaštićenu stranicu.
+
+\subsection{Rezervacija vozila}
+
+Korisnik na stranici za rezervacije odabire jedno od pet dostupnih vozila (BMW X5, Audi A6, Mercedes C200, VW Golf, Škoda Octavia), unosi e-mail adresu, datume preuzimanja i vraćanja te opcionalne podatke poput broja putnika i napomena. Backend API trenutno prihvaća samo dva query parametra -- \texttt{car\_id} i \texttt{user\_email} -- dok dodatna polja (datumi, broj putnika, telefon, napomena) ostaju na razini prezentacijskog sloja i prikazuju se u potvrdi; ovakva jasna razdvojenost ostavlja prostor za proširenje API-ja bez promjene UI-a.
+
+Booking-service prima zahtjev, generira UUID identifikator, konstruira JSON poruku i stavlja je u Redis red. Korisniku se odmah prikazuje potvrda s identifikatorom i statusom \texttt{confirmed}. U pozadini, Mail-worker preuzima poruku iz reda i simulira slanje potvrdnog e-maila. Ovakva asinkrona obrada osigurava da korisnik nikada ne čeka na sporedne operacije poput slanja e-maila.
+
+\subsection{Evidencija šteta}
+
+Prijava štete svodi se na odabir fotografije oštećenja u jednom od podržanih formata (JPG, PNG, GIF) i upload putem web sučelja. Frontend šalje datoteku kao \texttt{multipart/form-data} na Damage-service koji je prosljeđuje u S3 bucket. Korisnik dobiva potvrdu sa statusom \texttt{pending}, signalizirajući da je slika zaprimljena i čeka obradu. U produkcijskom okruženju, S3 event bi pokrenuo Lambda funkciju koja bi mogla provesti automatsku analizu slike.
+
+\subsection{GPS praćenje}
+
+GPS-tracker prima lokacijske podatke putem gRPC poziva. Svaki poziv sadrži identifikator vozila i GPS koordinate. Servis bilježi primljene lokacije, čime pruža temelj za praćenje flote vozila u stvarnom vremenu. Korištenje gRPC-a umjesto REST-a opravdano je prirodom podataka -- GPS koordinate su male, strukturirane poruke koje se šalju u visokoj frekvenciji, a binarna serijalizacija Protocol Buffersa i multipleksiranje HTTP/2 protokola značajno smanjuju mrežni overhead.
+
+\subsection{Praćenje grešaka}
+
+Svaki servis integriran je sa Sentry platformom za praćenje grešaka. Sentry konfiguracija čita se iz varijabli okruženja: \texttt{SENTRY\_DSN} (ciljni projekt), \texttt{SENTRY\_ENV} (okruženje, default \texttt{development}) te \texttt{SENTRY\_TRACES\_SAMPLE\_RATE} (udio zahtjeva koji se uzorkuje za performance tracing, default \texttt{0.0}). Inicijalizacija je omotana u \texttt{try/except} blok pa se servisi čisto pokreću i u odsustvu DSN-a -- Sentry tada tiho postaje no-op.
+
+Backend servisi koriste \texttt{StarletteIntegration} (za REST servise), \texttt{StdlibIntegration} i \texttt{LoggingIntegration}, dok frontend koristi \texttt{browserTracingIntegration} za praćenje performansi i \texttt{replayIntegration} za snimanje korisničkih sesija prilikom grešaka. Zastavica \texttt{send\_default\_pii=True} omogućuje da Sentry automatski prikuplja osnovne podatke o korisniku (IP, user-agent, email ako je postavljen).
+
+Svaki servis nudi \texttt{GET /\_\_debug/crash} endpoint za namjerno izazivanje iznimke i testiranje Sentry pipeline-a. Mail-worker, koji nema HTTP sučelje, podržava udaljeni crash signal putem Redis ključa \texttt{crash\_mail\_worker}; Booking-service postavlja taj ključ preko vlastitog \texttt{POST /\_\_debug/crash-mail-worker} endpointa, a worker ga obrađuje na idućoj BLPOP iteraciji. Frontend komponenta \texttt{CrashControls} objedinjuje sve ove akcije u jednostavno sučelje s četiri gumba.
+
+% ========================================================================
+\section{Komunikacijski protokoli}
+
+Jedna od ključnih odluka u dizajnu distribuiranog sustava jest odabir komunikacijskog protokola. RS-Rently namjerno koristi tri različita protokola kako bi demonstrirao da ne postoji univerzalno rješenje -- svaki protokol ima prednosti koje ga čine optimalnim za određeni tip komunikacije.
+
+\subsection{REST API (HTTP/JSON)}
+
+Auth-service, Booking-service i Damage-service komuniciraju s frontendom putem REST API-ja. Zahtjevi i odgovori razmjenjuju se u JSON formatu, a FastAPI automatski generira interaktivnu Swagger dokumentaciju na \texttt{/docs} putanji svakog servisa. REST je odabran za ove servise jer je intuitivno razumljiv, izvrstan za CRUD operacije i nativno podržan u web preglednicima. Tablica~\ref{tab:endpoints} prikazuje pregled svih REST endpointa.
+
+\begin{table}[H]
+\centering
+\caption{Pregled REST API endpointa}
+\label{tab:endpoints}
+\begin{tabularx}{\textwidth}{l l l X}
+\toprule
+\textbf{Servis} & \textbf{Metoda} & \textbf{Endpoint} & \textbf{Opis} \\
+\midrule
+Auth    & POST & /login                     & Prijava korisnika, vraća JWT token \\
+Auth    & GET  & /verify                    & Provjera valjanosti JWT tokena \\
+Auth    & GET  & /\_\_debug/crash           & Simulirani pad servisa (Sentry test) \\
+Booking & POST & /bookings                  & Kreiranje nove rezervacije vozila \\
+Booking & GET  & /\_\_debug/crash           & Simulirani pad servisa (Sentry test) \\
+Booking & POST & /\_\_debug/crash-mail-worker & Postavlja Redis signal za pad Mail-workera \\
+Damage  & POST & /upload-damage             & Upload slike oštećenja na S3 \\
+Damage  & GET  & /\_\_debug/crash           & Simulirani pad servisa (Sentry test) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{gRPC (Protocol Buffers)}
+
+GPS-tracker koristi gRPC -- framework za udaljene pozive procedura temeljen na HTTP/2 transportu i Protocol Buffers serijalizaciji. Sučelje servisa definirano je \texttt{.proto} datotekom iz koje se automatski generira klijentski i serverski kod:
+
+\begin{lstlisting}[language=Java,caption={Definicija gRPC sučelja (gps.proto)}]
+syntax = "proto3";
+
+service GPSTracker {
+  rpc SendLocation (LocationUpdate) returns (Empty) {}
+}
+
+message LocationUpdate {
+  string car_id = 1;
+  double latitude = 2;
+  double longitude = 3;
+}
+
+message Empty {}
+\end{lstlisting}
+
+Prednost gRPC-a pred REST-om u ovom kontekstu je trostruka: binarna serijalizacija daje manje poruke nego JSON, HTTP/2 omogućuje multipleksiranje više poziva preko jedne TCP veze, a strogo tipizirana shema eliminira cijelu kategoriju grešaka pri serijalizaciji.
+
+\subsection{Redis Message Queue}
+
+Komunikacija između Booking-servisa i Mail-workera odvija se putem Redis liste \texttt{email\_queue}. Booking-service dodaje poruke naredbom \texttt{RPUSH}, a Mail-worker ih čita blokirajućom naredbom \texttt{BLPOP} s timeoutom od 5 sekundi. Ovo je klasičan producer-consumer obrazac koji donosi tri ključne prednosti: vremensko odvajanje (producent i konzument ne moraju raditi istovremeno), apsorpcija opterećenja (Redis služi kao buffer pri naglim skokovima) i otpornost na padove (poruke preživljavaju restart workera).
+
+% ========================================================================
+\section{Struktura projekta}
+
+\begin{lstlisting}[caption={Direktorijska struktura projekta}]
+rs-rently/
+|
+|- auth-service/
+|  |- main.py                 # JWT autentifikacija (FastAPI)
+|  |- Dockerfile
+|
+|- booking-service/
+|  |- main.py                 # Rezervacije + Redis queue (FastAPI)
+|  |- Dockerfile
+|
+|- damage-lambda/
+|  |- main.py                 # S3 upload (FastAPI)
+|  |- lambda-function.py      # AWS Lambda handler
+|  |- Dockerfile
+|
+|- mail-worker/
+|  |- main.py                 # Redis consumer, simulacija e-maila
+|  |- Dockerfile
+|
+|- gps-tracker/
+|  |- main.py                 # gRPC server
+|  |- gps.proto               # Protocol Buffers definicija
+|  |- Dockerfile
+|
+|- frontend/
+|  |- src/
+|  |  |- components/
+|  |  |  |- Login.vue          # Prijava korisnika
+|  |  |  |- Dashboard.vue      # Pregled sustava
+|  |  |  |- Bookings.vue       # Kreiranje rezervacija
+|  |  |  |- DamageUpload.vue   # Upload slika steta
+|  |  |  |- CrashControls.vue  # Testiranje padova
+|  |  |- api.js                # Axios instance + interceptori
+|  |  |- main.js               # Vue app, router, Sentry init
+|  |  |- App.vue               # Root komponenta s navigacijom
+|  |- nginx.conf               # SPA routing, gzip, cache
+|  |- vite.config.js
+|  |- Dockerfile               # Multi-stage build (Node + Nginx)
+|  |- package.json
+|
+|- docker-compose.yaml         # Orkestracija svih servisa
+|- start.sh
+|- README.md
+\end{lstlisting}
+
+Svaki backend servis sadrži vlastiti \texttt{main.py} s kompletnom logikom i \texttt{Dockerfile} za izgradnju kontejnera. Ovakva organizacija osigurava da se svaki servis može razvijati, testirati i deployati neovisno o ostalima. Frontend koristi multi-stage Docker build: prva faza kompajlira Vue aplikaciju putem Node.js-a, a druga kopira generirane statičke datoteke u Nginx kontejner.
+
+% ========================================================================
+\section{Docker i pokretanje}
+
+Cijeli sustav orkestriran je jednom \texttt{docker-compose.yaml} datotekom koja definira osam servisa (šest aplikacijskih i dva infrastrukturna) povezanih zajedničkom Docker bridge mrežom \texttt{rent\_network}. Unutar te mreže, servisi se referenciraju po imenu -- primjerice, Booking-service pristupa Redisu na hostu \texttt{redis}, a Damage-service pristupa LocalStacku na \texttt{localstack:4566}. Varijable okruženja poput \texttt{SENTRY\_DSN} i \texttt{SENTRY\_ENV} prosljeđuju se iz host sustava putem \texttt{\$\{...\}} sintakse.
+
+Za izgradnju i pokretanje cijelog sustava dovoljne su dvije naredbe:
+
+\begin{lstlisting}
+docker-compose up --build     # prva izgradnja
+docker-compose up             # svako sljedece pokretanje
+\end{lstlisting}
+
+\begin{infobox}
+\textbf{Konfiguracija Sentryja.} Backend servisi očekuju varijable \texttt{SENTRY\_DSN}, \texttt{SENTRY\_ENV} i \texttt{SENTRY\_TRACES\_SAMPLE\_RATE} u root \texttt{.env} datoteci. Frontend (Vite) čita \texttt{VITE\_SENTRY\_DSN} iz \texttt{frontend/.env} tijekom build faze -- zbog toga je nakon promjene DSN-a potrebno pokrenuti \texttt{docker-compose up --build} kako bi se frontend ponovno kompajlirao s novom vrijednošću.
+\end{infobox}
+
+Nakon pokretanja, sustav je dostupan na sljedećim adresama:
+
+\begin{table}[H]
+\centering
+\caption{Mrežna konfiguracija servisa}
+\label{tab:ports}
+\begin{tabularx}{\textwidth}{l l l X}
+\toprule
+\textbf{Servis} & \textbf{Port} & \textbf{Protokol} & \textbf{Napomena} \\
+\midrule
+Frontend & 3000 & HTTP & Nginx, SPA routing \\
+Auth-service & 8000 & HTTP & Swagger na \texttt{/docs} \\
+Booking-service & 8001 & HTTP & Swagger na \texttt{/docs} \\
+Damage-service & 8002 & HTTP & Swagger na \texttt{/docs} \\
+GPS-tracker & 50051 & gRPC & Protocol Buffers \\
+LocalStack & 4566 & HTTP & DynamoDB + S3 \\
+Redis & 6379 & TCP & Message broker \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Za razvoj frontenda s automatskim osvježavanjem koristi se Vite dev server (\texttt{npm run dev} u \texttt{frontend/} direktoriju), koji aplikaciju servira na portu 5173.
+
+% ========================================================================
+\section{Dijagram klasa}
+
+Dijagram na slici~\ref{fig:class} prikazuje ključne klase i module sustava te njihove međusobne odnose. Isprekidane strelice označavaju mrežnu komunikaciju (HTTP ili Redis), a pune strelice označavaju izravnu ovisnost.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  class/.style={
+    rectangle split,
+    rectangle split parts=3,
+    draw,
+    thick,
+    fill=blue!5,
+    minimum width=5cm,
+    font=\small,
+    align=center
+  },
+  dataclass/.style={
+    rectangle split,
+    rectangle split parts=2,
+    draw,
+    thick,
+    fill=yellow!10,
+    minimum width=4cm,
+    font=\small,
+    align=center
+  },
+  arrow/.style={-{Stealth[length=3mm]}, thick},
+  darrow/.style={-{Stealth[length=3mm]}, thick, dashed},
+  dep/.style={-{Triangle[length=3mm, open]}, thick}
+]
+
+% ---- Top row ----
+
+% AuthService
+\node[class] (auth) at (0, 0) {
+  \textbf{AuthService}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - SECRET\_KEY: str \\
+  - app: FastAPI
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + login(user: User): dict \\
+  + verify(token: str): dict \\
+  + crash(): Exception
+  \end{tabular}
+};
+
+% User model
+\node[dataclass, right=2cm of auth] (user) {
+  \textbf{\guillemotleft BaseModel\guillemotright{} User}
+  \nodepart{second}
+  \begin{tabular}{l}
+  + username: str \\
+  + password: str
+  \end{tabular}
+};
+
+% ---- Middle row ----
+
+% BookingService
+\node[class, below=2.5cm of auth] (booking) at (-0.5, -4) {
+  \textbf{BookingService}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - r: redis.Redis \\
+  - app: FastAPI
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + create\_booking(car\_id: str, \\
+  \quad user\_email: str, \\
+  \quad authorization: str): dict \\
+  + crash\_mail\_worker(): dict
+  \end{tabular}
+};
+
+% DamageService
+\node[class] (damage) at (8.5, -4) {
+  \textbf{DamageService}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - s3: boto3.Client \\
+  - BUCKET\_NAME: str \\
+  - app: FastAPI
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + upload\_damage( \\
+  \quad file: UploadFile): dict
+  \end{tabular}
+};
+
+% ---- Bottom row ----
+
+% MailWorker
+\node[class] (mail) at (-0.5, -9) {
+  \textbf{MailWorker}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - r: redis.Redis \\
+  - queue\_name: str
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + run\_loop(): void \\
+  + process(data: dict): void \\
+  + check\_crash\_signal(): void
+  \end{tabular}
+};
+
+% GPSTrackerService
+\node[class] (gps) at (8.5, -9) {
+  \textbf{GPSTrackerService}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - server: grpc.Server \\
+  - max\_workers: int = 10
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + SendLocation( \\
+  \quad req: LocationUpdate, \\
+  \quad ctx: Context): Empty \\
+  + serve(): void
+  \end{tabular}
+};
+
+% LocationUpdate
+\node[dataclass, right=2cm of gps] (loc) at (14, -9) {
+  \textbf{\guillemotleft protobuf\guillemotright{} LocationUpdate}
+  \nodepart{second}
+  \begin{tabular}{l}
+  + car\_id: string \\
+  + latitude: double \\
+  + longitude: double
+  \end{tabular}
+};
+
+% LambdaHandler
+\node[class] (lambda) at (16, -4) {
+  \textbf{LambdaHandler}
+  \nodepart{second}
+  \begin{tabular}{l}
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + handler(event, \\
+  \quad context): dict
+  \end{tabular}
+};
+
+% Frontend APIClient
+\node[class] (api) at (4, -14) {
+  \textbf{APIClient (frontend)}
+  \nodepart{second}
+  \begin{tabular}{l}
+  - authAPI: AxiosInstance \\
+  - bookingAPI: AxiosInstance \\
+  - damageAPI: AxiosInstance
+  \end{tabular}
+  \nodepart{third}
+  \begin{tabular}{l}
+  + login(username, password): Promise \\
+  + verifyToken(token): Promise \\
+  + createBooking(carId, email): Promise \\
+  + uploadDamage(file): Promise
+  \end{tabular}
+};
+
+% ---- Arrows ----
+\draw[arrow] (auth) -- (user) node[midway, above, font=\scriptsize] {prima};
+\draw[arrow] (gps) -- (loc) node[midway, above, font=\scriptsize] {prima};
+\draw[darrow, blue!60] (booking) -- (mail) node[midway, left, font=\scriptsize, text=blue!60] {Redis RPUSH/BLPOP};
+\draw[darrow, red!60] (api) -| (auth) node[near end, left, font=\scriptsize, text=red!60] {HTTP POST/GET};
+\draw[darrow, red!60] (api) -- (booking) node[midway, right, font=\scriptsize, text=red!60] {HTTP POST};
+\draw[darrow, red!60] (api) -| (damage) node[near end, right, font=\scriptsize, text=red!60] {HTTP POST};
+\draw[darrow, gray] (damage) -- (lambda) node[midway, above, font=\scriptsize, text=gray] {S3 event trigger};
+
+\end{tikzpicture}
+}%
+\caption{Dijagram klasa sustava RS-Rently}
+\label{fig:class}
+\end{figure}
+
+% ========================================================================
+\section{UML dijagram komponenti}
+
+Dijagram na slici~\ref{fig:component} prikazuje sustav u UML notaciji komponenti. Svaka komponenta označena je stereotipom \guillemotleft component\guillemotright{} i UML ikonom komponente u gornjem desnom kutu. Pružena sučelja crtana su kao \emph{lollipop} kružići, a ovisnost potrošača prema pruženom sučelju označena je isprekidanom strelicom sa stereotipom \guillemotleft use\guillemotright. Cijela konfiguracija izvršava se unutar Docker mreže \texttt{rent\_network}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  comp/.style={
+    rectangle, draw, thick,
+    fill=blue!5,
+    minimum width=3.8cm, minimum height=1.8cm,
+    font=\small, align=center,
+    inner sep=4pt
+  },
+  infra/.style={
+    rectangle, draw, thick,
+    fill=orange!15,
+    minimum width=3.4cm, minimum height=1.6cm,
+    font=\small, align=center,
+    inner sep=4pt
+  },
+  prov/.style={circle, draw, thick, fill=white, minimum size=5mm, inner sep=0pt},
+  use/.style={-{Stealth[length=2.5mm]}, thick, dashed, gray!70!black},
+  ifacelbl/.style={font=\scriptsize, fill=white, inner sep=1pt},
+  uselbl/.style={font=\scriptsize\itshape, fill=white, inner sep=1pt}
+]
+
+% ===== Components =====
+\node[comp] (fe) at (0, 0) {\guillemotleft component\guillemotright\\\textbf{Frontend}\\{\scriptsize Vue.js 3 + Nginx}};
+\node[comp] (auth) at (-7, -5.5) {\guillemotleft component\guillemotright\\\textbf{AuthService}\\{\scriptsize FastAPI + JWT}};
+\node[comp] (book) at (-2.3, -5.5) {\guillemotleft component\guillemotright\\\textbf{BookingService}\\{\scriptsize FastAPI}};
+\node[comp] (dmg)  at (2.3, -5.5) {\guillemotleft component\guillemotright\\\textbf{DamageService}\\{\scriptsize FastAPI + boto3}};
+\node[comp] (gps)  at (7, -5.5) {\guillemotleft component\guillemotright\\\textbf{GPSTracker}\\{\scriptsize gRPC}};
+\node[comp] (mail) at (-5, -11) {\guillemotleft component\guillemotright\\\textbf{MailWorker}\\{\scriptsize Python daemon}};
+\node[infra] (redis) at (0, -11) {\guillemotleft component\guillemotright\\\textbf{Redis}\\{\scriptsize Alpine}};
+\node[infra] (local) at (5, -11) {\guillemotleft component\guillemotright\\\textbf{LocalStack}\\{\scriptsize S3 + DynamoDB}};
+
+% UML component icons (small stacked rectangles in top-right of each component)
+\foreach \n in {fe, auth, book, dmg, gps, mail, redis, local} {
+  \draw ([xshift=-0.55cm, yshift=-0.12cm]\n.north east) rectangle ++(0.4,0.28);
+  \draw ([xshift=-0.65cm, yshift=-0.16cm]\n.north east) rectangle ++(0.12,0.09);
+  \draw ([xshift=-0.65cm, yshift=-0.28cm]\n.north east) rectangle ++(0.12,0.09);
+}
+
+% ===== Provided interfaces (lollipops) =====
+\node[prov] (iAuth) at (-7, -3.3) {};
+\draw[thick] (auth.north) -- (iAuth.south);
+\node[ifacelbl, left=1pt of iAuth] {IAuth};
+
+\node[prov] (iBook) at (-2.3, -3.3) {};
+\draw[thick] (book.north) -- (iBook.south);
+\node[ifacelbl, right=1pt of iBook] {IBooking};
+
+\node[prov] (iDmg) at (2.3, -3.3) {};
+\draw[thick] (dmg.north) -- (iDmg.south);
+\node[ifacelbl, right=1pt of iDmg] {IDamage};
+
+\node[prov] (iGps) at (7, -3.3) {};
+\draw[thick] (gps.north) -- (iGps.south);
+\node[ifacelbl, right=1pt of iGps] {ILocation};
+
+\node[prov] (iQueue) at (0, -8.7) {};
+\draw[thick] (redis.north) -- (iQueue.south);
+\node[ifacelbl, right=1pt of iQueue] {IEmailQueue};
+
+\node[prov] (iS3) at (5, -8.7) {};
+\draw[thick] (local.north) -- (iS3.south);
+\node[ifacelbl, right=1pt of iS3] {IS3};
+
+% ===== Dependency (use) arrows =====
+% Frontend -> Auth, Booking, Damage
+\draw[use] (fe.south west) to[out=-135, in=90] (iAuth.north)
+  node[uselbl, pos=0.55, above] {\guillemotleft use\guillemotright};
+\draw[use] (fe.south) -- (iBook.north)
+  node[uselbl, midway, right] {\guillemotleft use\guillemotright};
+\draw[use] (fe.south east) to[out=-45, in=90] (iDmg.north)
+  node[uselbl, pos=0.55, above] {\guillemotleft use\guillemotright};
+
+% Booking -> Redis queue
+\draw[use] (book.south) to[out=-90, in=120] (iQueue.north west)
+  node[uselbl, pos=0.6, left] {\guillemotleft use\guillemotright};
+
+% MailWorker -> Redis queue
+\draw[use] (mail.east) to[out=0, in=180] (iQueue.west)
+  node[uselbl, midway, above] {\guillemotleft use\guillemotright};
+
+% Damage -> LocalStack S3
+\draw[use] (dmg.south) to[out=-90, in=120] (iS3.north west)
+  node[uselbl, pos=0.6, left] {\guillemotleft use\guillemotright};
+
+% Docker network boundary
+\node[draw, dashed, very thick, blue!40, rounded corners=8pt,
+  fit=(fe)(auth)(book)(dmg)(gps)(mail)(redis)(local)(iAuth)(iGps)(iQueue)(iS3),
+  inner sep=16pt,
+  label={[blue!40, font=\bfseries]above:Docker Network: rent\_network}
+] {};
+
+\end{tikzpicture}
+}%
+\caption{UML dijagram komponenti sustava RS-Rently}
+\label{fig:component}
+\end{figure}
+
+Pružena sučelja semantički odgovaraju javnim API-jima pojedinih komponenti: \texttt{IAuth}, \texttt{IBooking} i \texttt{IDamage} su REST sučelja izložena FastAPI-jem, \texttt{ILocation} je gRPC sučelje definirano \texttt{gps.proto} datotekom, \texttt{IEmailQueue} je Redis list API koji koriste producent (BookingService) i konzument (MailWorker), a \texttt{IS3} je AWS S3 sučelje koje LocalStack simulira lokalno. Ovakav prikaz jasno razdvaja \emph{što} komponenta pruža od \emph{kako} je implementirana.
+
+% ========================================================================
+\section{Sekvencijski dijagram}
+
+Slika~\ref{fig:sequence} prikazuje dva osnovna toka sustava. Prvi tok (koraci 1--4) ilustrira autentifikaciju: korisnik unosi kredencijale, Frontend ih prosljeđuje Auth-servisu koji vraća JWT token, a korisnik biva preusmjeren na Dashboard. Drugi tok (koraci 5--11) ilustrira kreiranje rezervacije s asinkronom obradom: Booking-service prima zahtjev, gura poruku u Redis red i odmah vraća potvrdu, dok Mail-worker neovisno preuzima poruku i šalje e-mail.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  lifeline/.style={dashed, gray!50},
+  msg/.style={-{Stealth[length=2.5mm]}, thick},
+  ret/.style={-{Stealth[length=2.5mm]}, thick, dashed},
+  box/.style={rectangle, draw, thick, fill=blue!8, minimum width=2cm, minimum height=0.8cm, font=\small\bfseries},
+  note/.style={rectangle, draw, fill=yellow!15, font=\scriptsize, align=left, rounded corners=2pt}
+]
+
+% Actors
+\node[box] (user) at (0,0) {Korisnik};
+\node[box] (fe) at (3.8,0) {Frontend};
+\node[box] (as) at (7.6,0) {Auth};
+\node[box] (bs) at (11.4,0) {Booking};
+\node[box] (rd) at (15.2,0) {Redis};
+\node[box] (mw) at (19,0) {Mail Worker};
+
+% Lifelines
+\foreach \n in {user, fe, as, bs, rd, mw} {
+  \draw[lifeline] (\n.south) -- ++(0,-16);
+}
+
+% ===== PHASE 1: Authentication =====
+\node[note] at (-2.5, -0.8) {Faza 1:\\Autentifikacija};
+
+\draw[msg] (0,-1.8) -- (3.8,-1.8) node[midway, above, font=\scriptsize] {1. username + password};
+\draw[msg] (3.8,-2.8) -- (7.6,-2.8) node[midway, above, font=\scriptsize] {2. POST /login \{username, password\}};
+\draw[ret] (7.6,-3.8) -- (3.8,-3.8) node[midway, above, font=\scriptsize] {3. \{access\_token, token\_type: bearer\}};
+\draw[ret] (3.8,-4.8) -- (0,-4.8) node[midway, above, font=\scriptsize] {4. preusmjeravanje na Dashboard};
+
+% Note: token stored
+\node[note, right] at (4, -4.2) {\scriptsize localStorage.setItem(``token'')};
+
+% Separator
+\draw[thick, dotted, red!30] (-3,-5.6) -- (21,-5.6);
+
+% ===== PHASE 2: Booking =====
+\node[note] at (-2.5, -6.2) {Faza 2:\\Rezervacija};
+
+\draw[msg] (0,-7) -- (3.8,-7) node[midway, above, font=\scriptsize] {5. odabir vozila + e-mail};
+\draw[msg] (3.8,-8) -- (11.4,-8) node[midway, above, font=\scriptsize] {6. POST /bookings?car\_id=...  +  Bearer token};
+\draw[msg] (11.4,-9.2) -- (15.2,-9.2) node[midway, above, font=\scriptsize] {7. RPUSH email\_queue \{JSON\}};
+\draw[ret] (15.2,-10) -- (11.4,-10) node[midway, above, font=\scriptsize] {8. OK};
+\draw[ret] (11.4,-11) -- (3.8,-11) node[midway, above, font=\scriptsize] {9. \{booking\_id, status: confirmed\}};
+\draw[ret] (3.8,-12) -- (0,-12) node[midway, above, font=\scriptsize] {10. prikaz potvrde};
+
+% Separator
+\draw[thick, dotted, red!30] (-3,-12.8) -- (21,-12.8);
+
+% ===== PHASE 3: Async mail =====
+\node[note] at (-2.5, -13.3) {Faza 3:\\Asinkrona obrada};
+
+\draw[msg] (19,-13.8) -- (15.2,-13.8) node[midway, above, font=\scriptsize] {11. BLPOP email\_queue};
+\draw[ret] (15.2,-14.8) -- (19,-14.8) node[midway, above, font=\scriptsize] {12. \{email, car\_id, ...\}};
+
+\node[note, right] at (19.3, -15.5) {\scriptsize simulacija slanja\\e-maila (2s delay)};
+
+\end{tikzpicture}
+}%
+\caption{Sekvencijski dijagram -- autentifikacija, rezervacija i asinkrona obrada}
+\label{fig:sequence}
+\end{figure}
+
+% ========================================================================
+\section{Konceptualni model domene}
+
+U ranoj fazi planiranja sustava izrađen je konceptualni dijagram koji prikazuje cjelovitu domenu rent-a-car poslovanja -- sve sudionike, funkcionalne blokove i baze podataka koje bi dovršeni sustav trebao obuhvatiti. Taj model je šire postavljen od trenutnog MVP-a i služi kao \emph{roadmap} za buduće iteracije; važno je jasno razlikovati što je implementirano u ovoj verziji, a što je zadržano kao prostor za daljnji razvoj.
+
+\begin{figure}[H]
+\centering
+\IfFileExists{domena.png}{%
+  \includegraphics[width=\textwidth]{domena.png}%
+}{%
+  \fbox{\parbox[c][5cm][c]{0.8\textwidth}{\centering\itshape
+    [Placeholder: spremi konceptualni dijagram kao\\
+    \texttt{domena.png} u isti direktorij kao \texttt{dokumentacija.tex}]}}%
+}
+\caption{Konceptualni dijagram domene -- ciljno stanje sustava}
+\label{fig:domena}
+\end{figure}
+
+Tablica~\ref{tab:pokrivenost} izravno mapira svaki element dijagrama na trenutni kod, označavajući što je dovršeno ($\checkmark$), a što je predviđeno za iduću iteraciju ($\times$).
+
+\begin{table}[H]
+\centering
+\caption{Pokrivenost konceptualnog modela u MVP implementaciji}
+\label{tab:pokrivenost}
+\begin{tabularx}{\textwidth}{l c X}
+\toprule
+\textbf{Komponenta iz plana} & \textbf{MVP} & \textbf{Napomena} \\
+\midrule
+Autentifikacija korisnika      & $\checkmark$ & \texttt{auth-service}, JWT \\
+Realtime praćenje vozila       & $\checkmark$ & \texttt{gps-tracker} preko gRPC-a \\
+Naručivanje vozila (klijent)   & $\checkmark$ & \texttt{booking-service} \\
+Frontend sučelje za klijente   & $\checkmark$ & Vue SPA (\texttt{Bookings}, \texttt{DamageUpload}) \\
+Sustav za prijavu šteta        & $\checkmark$ & \texttt{damage-service} + S3 \\
+Frontend za prijavu šteta      & $\checkmark$ & komponenta \texttt{DamageUpload.vue} \\
+Sustav za slanje maila         & $\checkmark$ & \texttt{mail-worker} + Redis queue \\
+\midrule
+Baza korisnika                 & $\times$ & Kredencijali trenutno hardkodirani (\texttt{admin/admin}) \\
+Baza vozila                    & $\times$ & Vozila su statička lista u \texttt{Bookings.vue} \\
+Baza rezervacija               & $\times$ & Rezervacije prolaze kroz Redis queue bez perzistencije; DynamoDB u LocalStacku pripremljen za ovu namjenu \\
+Održavanje vozila              & $\times$ & Domenski koncept, nije realiziran kao servis \\
+Provjera dostupnosti vozila    & $\times$ & \texttt{booking-service} trenutno ne provjerava zauzetost termina \\
+Frontend sučelje agenta        & $\times$ & Postoji samo jedinstveni frontend; agentski pogled predviđen uz uvođenje baze rezervacija \\
+Poveznica šteta $\leftrightarrow$ rezervacija & $\times$ & \texttt{damage-service} uploada fotografiju bez referenciranja konkretne rezervacije \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Opseg MVP-a}
+
+Fokus ove verzije je demonstracija \emph{komunikacijskih obrazaca} distribuiranog sustava -- REST, gRPC i asinkrona obrada putem message queue-a -- a ne potpuna poslovna logika rent-a-car operacije. Zbog toga su komponente koje zahtijevaju perzistentnu pohranu svjesno pojednostavljene: umjesto baza podataka korištene su hardkodirane vrijednosti i in-memory strukture, čime se zadržava jasnoća protoka poruka između servisa i izbjegava komplikacija vezana uz sheme, migracije i transakcije.
+
+\subsection{Predviđena proširenja}
+
+Prirodni sljedeći korak je uvođenje perzistencije. DynamoDB je već konfiguriran u LocalStacku, pa bi dodavanje tablica \texttt{users}, \texttt{cars} i \texttt{bookings} zahtijevalo samo ukidanje hardkodiranih vrijednosti u \texttt{auth-service}-u i \texttt{booking-service}-u te dodavanje čitanja i pisanja preko \texttt{boto3} klijenta. Nakon što \texttt{booking-service} dobije pristup bazi rezervacija, prirodno slijede: provjera dostupnosti termina, povezivanje uploadanih fotografija šteta s konkretnim rezervacijama te izrada zasebnog \emph{agentskog} sučelja koje bi dohvaćalo i ažuriralo te zapise. Održavanje vozila može se realizirati kao novi mikroservis s vlastitim schedulerom -- bez ikakvih izmjena u postojećim servisima, jedino dodavanjem novog čvora u Docker mrežu.
+
+Ovakva postupnost nije samo pragmatična odluka vezana uz rokove kolegija -- ona ilustrira ključnu prednost mikroservisne arhitekture: svaki od ovih koraka može se implementirati nezavisno, bez riskiranja regresije u već dovršenim dijelovima sustava.
+
+% ========================================================================
+\section{Zaključak}
+
+RS-Rently demonstrira kako se složen poslovni sustav može razložiti na skup neovisnih mikroservisa koji zajedno pružaju cjelovitu funkcionalnost. Svaki servis ima jednu odgovornost, vlastiti životni ciklus i vlastite ovisnosti, a međusobno komuniciraju isključivo putem mrežnih sučelja.
+
+Korištenje tri različita komunikacijska protokola -- REST za standardne sinkrone operacije, gRPC za učinkovit prijenos strukturiranih podataka i Redis Queue za potpuno asinkronu obradu -- pokazuje da odabir protokola ovisi o prirodi podataka i zahtjevima konkretnog scenarija. REST je intuitivan i univerzalan, gRPC donosi performanse i strogo tipizirana sučelja, a message queue osigurava vremensko odvajanje i otpornost na padove.
+
+Kontejnerizacija putem Dockera i orkestracija putem Docker Compose-a omogućuju pokretanje cijelog sustava jednom naredbom, dok simulacija AWS servisa putem LocalStacka eliminira potrebu za oblačnom infrastrukturom u razvojnom okruženju. Integracija Sentryja na svim razinama -- od backenda do frontenda -- pruža centralizirani uvid u zdravlje sustava i olakšava dijagnostiku problema.
+
+Ovakva arhitektura otvorena je za daljnje proširenje: dodavanje novih servisa, integracija stvarnih AWS resursa, implementacija Service Mesha ili naprednije analitike ne bi zahtijevali promjene u postojećim servisima, već samo dodavanje novih čvorova u mrežu.
+
+\end{document}
