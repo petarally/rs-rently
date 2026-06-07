@@ -18,7 +18,7 @@ try:
 except Exception:
     pass
 
-r = redis.Redis(host='redis', port=6379, db=0)
+r = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 queue_name = "email_queue"
 
 print(f"[*] Mail Worker pokrenut. Čekam poruke na redu '{queue_name}'...")
@@ -48,7 +48,7 @@ while True:
             continue
 
         email = data.get("email")
-        car = data.get("car")
+        car = data.get("car_id")
 
         if not email:
             print(f"[MAIL][WARN] Poruka nema email polje: {data}")

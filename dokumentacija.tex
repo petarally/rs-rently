@@ -113,16 +113,16 @@
 % ========================================================================
 \section{Uvod}
 
-Suvremene web aplikacije rijetko se grade kao monolitni sustavi. Umjesto toga, složenost se razlaže na manje, samostalne cjeline -- \emph{mikroservise} -- koji komuniciraju putem jasno definiranih sučelja. Takav pristup donosi neovisnost razvoja i deploya, mogućnost skaliranja pojedinog dijela sustava te slobodu odabira tehnologije koja najbolje odgovara konkretnom zadatku.
+RS-Rently je projekt za kolegij Raspodijeljeni sustavi -- distribuirani sustav za iznajmljivanje vozila koji sam implementirao kao mikroservisnu arhitekturu. Sustav se sastoji od šest servisa koji pokrivaju različite domene: autentifikaciju, rezervacije, evidenciju šteta, slanje obavijesti, GPS praćenje i korisničko sučelje.
 
-RS-Rently nastao je upravo iz te ideje. Riječ je o distribuiranom sustavu za iznajmljivanje vozila koji objedinjuje šest mikroservisa, svaki zadužen za jednu domenu: autentifikaciju, rezervacije, evidenciju šteta, slanje obavijesti, GPS praćenje i korisničko sučelje. Servisi međusobno komuniciraju putem tri različita protokola -- REST, gRPC i Redis message queue -- čime projekt demonstrira raznolikost komunikacijskih obrazaca prisutnih u stvarnim distribuiranim sustavima.
+Ideja je bila koristiti više komunikacijskih protokola jer svaki ima drugačiji use case. REST je odabran za standardnu komunikaciju s frontendom, gRPC za prijenos GPS koordinata zbog nižeg overheada, a Redis queue za asinkronu obradu e-mailova -- korisniku se odmah vraća potvrda, a slanje maila odvija se u pozadini.
 
-Cilj projekta nije samo implementacija funkcionalne aplikacije, već i prikaz ključnih koncepata raspodijeljenih sustava: asinkrone obrade, odvajanja producenta i konzumenta poruka, kontejnerizacije, simulacije cloud infrastrukture te centraliziranog praćenja grešaka. Sustav se u cijelosti pokreće jednom \texttt{docker-compose} naredbom, a svaki servis živi u vlastitom kontejneru, s vlastitim ovisnostima i životnim ciklusom.
+Cijeli sustav pokreće se jednom \texttt{docker-compose} naredbom. AWS infrastruktura simulira se lokalno putem LocalStacka, što eliminira potrebu za oblačnim računom u razvoju.
 
 % ========================================================================
 \section{Arhitektura sustava}
 
-Arhitektura RS-Rently slijedi mikroservisni obrazac u kojem je svaka poslovna funkcija izdvojena u zaseban proces. Servisi ne dijele ni bazu podataka ni memoriju -- jedina sprega među njima je mrežna komunikacija putem strogo definiranih API-ja. Svih šest servisa i dvije infrastrukturne komponente povezani su zajedničkom Docker mrežom \texttt{rent\_network}, unutar koje se međusobno pronalaze putem Docker DNS rezolucije.
+Svaka poslovna funkcija izdvojena je u zaseban servis. Servisi ne dijele bazu podataka ni memoriju -- jedina sprega je mrežna komunikacija. Svih šest servisa i dvije infrastrukturne komponente smješteni su na zajedničku Docker mrežu \texttt{rent\_network}, unutar koje se pronalaze putem Docker DNS rezolucije.
 
 \subsection{Auth-service}
 
@@ -130,7 +130,7 @@ Auth-service predstavlja ulaznu točku sustava za svakog korisnika. Implementira
 
 \subsection{Booking-service}
 
-Booking-service prima zahtjeve za rezervaciju vozila na \texttt{POST /bookings} endpointu. Prije obrade provjerava prisutnost JWT tokena u zaglavlju te valjanost ulaznih parametara (\texttt{car\_id} i \texttt{user\_email}). Za svaku novu rezervaciju generira UUID identifikator, konstruira JSON objekt s podacima o rezervaciji i gura ga u Redis listu \texttt{email\_queue} naredbom \texttt{RPUSH}. Korisniku odmah vraća potvrdu s identifikatorom rezervacije, dok se daljnja obrada (slanje e-maila) odvija potpuno asinkrono, bez blokiranja odgovora. Ova arhitektonska odluka ključna je za responsivnost sustava -- korisnik ne čeka da se e-mail pošalje da bi dobio potvrdu.
+Booking-service prima zahtjeve za rezervaciju vozila na \texttt{POST /bookings} endpointu. Prije obrade provjerava \emph{prisutnost} JWT tokena u \texttt{Authorization} zaglavlju te valjanost ulaznih parametara (\texttt{car\_id} i \texttt{user\_email}). Napomena: u ovoj MVP verziji token se ne validira kriptografski unutar Booking-servisa -- provjera potpisa prepuštena je Auth-servisu putem \texttt{GET /verify} endpointa kojeg bi gateway ili middleware pozivao u produkcijskom scenariju. Ovakvo pojednostavljivanje svjesno je prihvaćeno radi jasnoće protoka poruka. Za svaku novu rezervaciju generira UUID identifikator, konstruira JSON objekt s podacima o rezervaciji i gura ga u Redis listu \texttt{email\_queue} naredbom \texttt{RPUSH}. Korisniku odmah vraća potvrdu s identifikatorom rezervacije, dok se daljnja obrada (slanje e-maila) odvija potpuno asinkrono, bez blokiranja odgovora. Ova arhitektonska odluka ključna je za responsivnost sustava -- korisnik ne čeka da se e-mail pošalje da bi dobio potvrdu.
 
 \subsection{Damage-service}
 
@@ -140,13 +140,13 @@ Damage-service zadužen je za evidenciju oštećenja vozila putem uploada fotogr
 
 Mail-worker je jedini servis koji ne izlaže nikakav API. Umjesto toga, radi kao pozadinski proces u beskonačnoj petlji, neprekidno osluškujući Redis red \texttt{email\_queue} pomoću blokirajućeg čitanja (\texttt{BLPOP}) s timeoutom od 5 sekundi. Kada poruka stigne, parsira JSON podatke, izvlači e-mail adresu i identifikator vozila te simulira slanje e-maila (u ovoj verziji to je \texttt{time.sleep(2)} s ispisom u log). Između svake iteracije provjerava i Redis ključ \texttt{crash\_mail\_worker} -- mehanizam koji omogućuje da Booking-service na zahtjev izazove simulirani pad workera, što je korisno za demonstraciju Sentry integracije.
 
-Ovaj producer-consumer obrazac osigurava otpornost sustava: čak i ako Mail-worker privremeno padne, poruke ostaju u Redis redu i bit će obrađene nakon ponovnog pokretanja. Redis pritom služi i kao prirodni buffer koji apsorbira nagle skokove u broju rezervacija.
+Prednost ovog pristupa je što poruke preživljavaju restart workera -- čak i ako Mail-worker padne, Booking-service nastavlja primati zahtjeve, a poruke u redu čekaju na obradu. Redis tu djeluje kao buffer koji apsorbira nagle skokove u prometu.
 
 \subsection{GPS-tracker}
 
 GPS-tracker jedini je servis koji ne koristi REST, već gRPC protokol. Sučelje je definirano Protocol Buffers shemom s jednom RPC metodom \texttt{SendLocation} koja prima strukturiranu poruku \texttt{LocationUpdate} (identifikator vozila, geografska širina i dužina) i vraća praznu poruku \texttt{Empty}. Servis koristi \texttt{ThreadPoolExecutor} s 10 radnih niti, čime može paralelno obrađivati lokacijske podatke od više vozila.
 
-Izbor gRPC-a za ovaj servis motiviran je prirodom podataka: GPS koordinate su jednostavne strukturirane poruke koje se šalju u visokoj frekvenciji, a gRPC nudi značajno manje overheada od REST-a zahvaljujući binarnoj serijalizaciji Protocol Buffersa i HTTP/2 transportu.
+GPS koordinate su male, strukturirane poruke koje se šalju u visokoj frekvenciji -- tu gRPC ima smisla. Binarna serijalizacija i HTTP/2 daju manji overhead od JSON-a, a strogo tipizirana shema znači da se greška poput pogrešno imenovanog polja uhvati ranije, ne tek u produkciji.
 
 \subsection{Frontend}
 
@@ -205,7 +205,7 @@ Svaki servis nudi \texttt{GET /\_\_debug/crash} endpoint za namjerno izazivanje 
 % ========================================================================
 \section{Komunikacijski protokoli}
 
-Jedna od ključnih odluka u dizajnu distribuiranog sustava jest odabir komunikacijskog protokola. RS-Rently namjerno koristi tri različita protokola kako bi demonstrirao da ne postoji univerzalno rješenje -- svaki protokol ima prednosti koje ga čine optimalnim za određeni tip komunikacije.
+Odabir komunikacijskog protokola jedno je od prvih pitanja pri dizajnu distribuiranog sustava i nema jednog pravog odgovora. U RS-Rentlyju koristim tri protokola jer svaki bolje odgovara drugačijem scenariju.
 
 \subsection{REST API (HTTP/JSON)}
 
@@ -251,7 +251,7 @@ message LocationUpdate {
 message Empty {}
 \end{lstlisting}
 
-Prednost gRPC-a pred REST-om u ovom kontekstu je trostruka: binarna serijalizacija daje manje poruke nego JSON, HTTP/2 omogućuje multipleksiranje više poziva preko jedne TCP veze, a strogo tipizirana shema eliminira cijelu kategoriju grešaka pri serijalizaciji.
+U usporedbi s REST-om, binarna serijalizacija daje manje poruke od JSON-a, HTTP/2 omogućuje multipleksiranje poziva, a .proto shema sprječava greške pri serijalizaciji koje bi se inače teže pronašle.
 
 \subsection{Redis Message Queue}
 
@@ -306,7 +306,7 @@ rs-rently/
 |- README.md
 \end{lstlisting}
 
-Svaki backend servis sadrži vlastiti \texttt{main.py} s kompletnom logikom i \texttt{Dockerfile} za izgradnju kontejnera. Ovakva organizacija osigurava da se svaki servis može razvijati, testirati i deployati neovisno o ostalima. Frontend koristi multi-stage Docker build: prva faza kompajlira Vue aplikaciju putem Node.js-a, a druga kopira generirane statičke datoteke u Nginx kontejner.
+Svaki backend servis sadrži vlastiti \texttt{main.py} i \texttt{Dockerfile}. Zahvaljujući toj organizaciji, servise je moguće razvijati i deployati neovisno. Frontend koristi multi-stage Docker build -- prva faza kompajlira Vue aplikaciju, a druga kopira generirane datoteke u Nginx kontejner.
 
 % ========================================================================
 \section{Docker i pokretanje}
@@ -641,7 +641,7 @@ Dijagram na slici~\ref{fig:component} prikazuje sustav u UML notaciji komponenti
 \label{fig:component}
 \end{figure}
 
-Pružena sučelja semantički odgovaraju javnim API-jima pojedinih komponenti: \texttt{IAuth}, \texttt{IBooking} i \texttt{IDamage} su REST sučelja izložena FastAPI-jem, \texttt{ILocation} je gRPC sučelje definirano \texttt{gps.proto} datotekom, \texttt{IEmailQueue} je Redis list API koji koriste producent (BookingService) i konzument (MailWorker), a \texttt{IS3} je AWS S3 sučelje koje LocalStack simulira lokalno. Ovakav prikaz jasno razdvaja \emph{što} komponenta pruža od \emph{kako} je implementirana.
+Pružena sučelja odgovaraju javnim API-jima pojedinih komponenti: \texttt{IAuth}, \texttt{IBooking} i \texttt{IDamage} su REST sučelja izložena FastAPI-jem, \texttt{ILocation} je gRPC sučelje definirano \texttt{gps.proto} datotekom, \texttt{IEmailQueue} je Redis list API koji dijele BookingService (producent) i MailWorker (konzument), a \texttt{IS3} je S3 sučelje koje LocalStack lokalno simulira.
 
 % ========================================================================
 \section{Sekvencijski dijagram}
@@ -693,7 +693,7 @@ Slika~\ref{fig:sequence} prikazuje dva osnovna toka sustava. Prvi tok (koraci 1-
 \draw[msg] (3.8,-8) -- (11.4,-8) node[midway, above, font=\scriptsize] {6. POST /bookings?car\_id=...  +  Bearer token};
 \draw[msg] (11.4,-9.2) -- (15.2,-9.2) node[midway, above, font=\scriptsize] {7. RPUSH email\_queue \{JSON\}};
 \draw[ret] (15.2,-10) -- (11.4,-10) node[midway, above, font=\scriptsize] {8. OK};
-\draw[ret] (11.4,-11) -- (3.8,-11) node[midway, above, font=\scriptsize] {9. \{booking\_id, status: confirmed\}};
+\draw[ret] (11.4,-11) -- (3.8,-11) node[midway, above, font=\scriptsize] {9. \{message: "Rezervacija kreirana!", booking\_id\}};
 \draw[ret] (3.8,-12) -- (0,-12) node[midway, above, font=\scriptsize] {10. prikaz potvrde};
 
 % Separator
@@ -768,17 +768,15 @@ Fokus ove verzije je demonstracija \emph{komunikacijskih obrazaca} distribuirano
 
 Prirodni sljedeći korak je uvođenje perzistencije. DynamoDB je već konfiguriran u LocalStacku, pa bi dodavanje tablica \texttt{users}, \texttt{cars} i \texttt{bookings} zahtijevalo samo ukidanje hardkodiranih vrijednosti u \texttt{auth-service}-u i \texttt{booking-service}-u te dodavanje čitanja i pisanja preko \texttt{boto3} klijenta. Nakon što \texttt{booking-service} dobije pristup bazi rezervacija, prirodno slijede: provjera dostupnosti termina, povezivanje uploadanih fotografija šteta s konkretnim rezervacijama te izrada zasebnog \emph{agentskog} sučelja koje bi dohvaćalo i ažuriralo te zapise. Održavanje vozila može se realizirati kao novi mikroservis s vlastitim schedulerom -- bez ikakvih izmjena u postojećim servisima, jedino dodavanjem novog čvora u Docker mrežu.
 
-Ovakva postupnost nije samo pragmatična odluka vezana uz rokove kolegija -- ona ilustrira ključnu prednost mikroservisne arhitekture: svaki od ovih koraka može se implementirati nezavisno, bez riskiranja regresije u već dovršenim dijelovima sustava.
+Ova postupnost ujedno demonstrira prednost mikroservisne arhitekture -- svaki od tih koraka može se implementirati neovisno, bez dodirivanja ostatka sustava.
 
 % ========================================================================
 \section{Zaključak}
 
-RS-Rently demonstrira kako se složen poslovni sustav može razložiti na skup neovisnih mikroservisa koji zajedno pružaju cjelovitu funkcionalnost. Svaki servis ima jednu odgovornost, vlastiti životni ciklus i vlastite ovisnosti, a međusobno komuniciraju isključivo putem mrežnih sučelja.
+Kroz ovaj projekt pokazao sam kako se jedan veći sustav može razbiti na neovisne servise koji međusobno komuniciraju putem mreže. Svaki servis ima jednu odgovornost i može se razvijati i deployati neovisno.
 
-Korištenje tri različita komunikacijska protokola -- REST za standardne sinkrone operacije, gRPC za učinkovit prijenos strukturiranih podataka i Redis Queue za potpuno asinkronu obradu -- pokazuje da odabir protokola ovisi o prirodi podataka i zahtjevima konkretnog scenarija. REST je intuitivan i univerzalan, gRPC donosi performanse i strogo tipizirana sučelja, a message queue osigurava vremensko odvajanje i otpornost na padove.
+Korištenjem tri različita protokola -- REST, gRPC i Redis queue -- vidljivo je da nema jednog rješenja koje odgovara svim scenarijima. REST je jednostavan za CRUD i standardnu komunikaciju, gRPC ima smisla gdje je overhead JSON-a problematičan, a message queue rješava asinkronu obradu bez blokiranja.
 
-Kontejnerizacija putem Dockera i orkestracija putem Docker Compose-a omogućuju pokretanje cijelog sustava jednom naredbom, dok simulacija AWS servisa putem LocalStacka eliminira potrebu za oblačnom infrastrukturom u razvojnom okruženju. Integracija Sentryja na svim razinama -- od backenda do frontenda -- pruža centralizirani uvid u zdravlje sustava i olakšava dijagnostiku problema.
-
-Ovakva arhitektura otvorena je za daljnje proširenje: dodavanje novih servisa, integracija stvarnih AWS resursa, implementacija Service Mesha ili naprednije analitike ne bi zahtijevali promjene u postojećim servisima, već samo dodavanje novih čvorova u mrežu.
+Sustav se pokreće jednom naredbom i ne zahtijeva oblačnu infrastrukturu zahvaljujući LocalStacku. Sentry integracija pokrila je sve razine, od backenda do frontenda, što bi u produkcijskom okruženju bila osnova za dijagnostiku. Arhitektura je relativno lako proširiva -- novi servis dodaje se kao novi kontejner u mrežu, bez diranja postojećih.
 
 \end{document}

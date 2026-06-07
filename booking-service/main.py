@@ -32,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-r = redis.Redis(host='redis', port=6379, db=0)
+r = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 
 @app.post("/bookings")
 def create_booking(car_id: str, user_email: str, authorization: str = Header(None)):
