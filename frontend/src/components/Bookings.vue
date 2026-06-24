@@ -108,8 +108,8 @@
         <h3>ℹ️ Kako radi rezervacija?</h3>
         <ol>
           <li>Odaberite vozilo, datum i unesite kontakt podatke</li>
-          <li>Sustav kreira rezervaciju u DynamoDB</li>
-          <li>Asinkrono se šalje poruka u Redis queue</li>
+          <li>Booking servis generira ID rezervacije i potvrđuje zahtjev</li>
+          <li>Asinkrono se šalje poruka u Redis queue (email_queue)</li>
           <li>
             Mail Worker preuzima poruku i šalje email potvrdu (simulacija)
           </li>

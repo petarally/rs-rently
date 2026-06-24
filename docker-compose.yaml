@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   localstack:
     image: localstack/localstack
@@ -60,6 +58,7 @@ services:
 
   mail-worker:
     build: ./mail-worker
+    restart: on-failure
     environment:
       - REDIS_HOST=redis
       - SENTRY_DSN=${SENTRY_DSN}

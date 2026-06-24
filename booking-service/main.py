@@ -50,7 +50,7 @@ def create_booking(car_id: str, user_email: str, authorization: str = Header(Non
         "status": "confirmed"
     }
 
-    print(f"Spremam rezervaciju {booking_id} u bazu...")
+    print(f"Šaljem rezervaciju {booking_id} u Redis red email_queue...")
 
     try:
         r.rpush("email_queue", json.dumps(booking_data))

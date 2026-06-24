@@ -3,6 +3,9 @@ import json
 import time
 import traceback
 import os
+import sys
+
+SENTRY_ENABLED = False
 try:
     import sentry_sdk
     from sentry_sdk.integrations.logging import LoggingIntegration
@@ -15,8 +18,15 @@ try:
         traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
         send_default_pii=True,
     )
+    SENTRY_ENABLED = True
 except Exception:
     pass
+
+
+class SimulatedCrash(Exception):
+    """Namjerno izazvan pad za demonstraciju Sentryja."""
+    pass
+
 
 r = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 queue_name = "email_queue"
@@ -25,16 +35,14 @@ print(f"[*] Mail Worker pokrenut. Čekam poruke na redu '{queue_name}'...")
 
 while True:
     try:
-        # Use a short timeout so we can periodically check for crash signal
-        item = r.blpop(queue_name, timeout=5)
+        # Provjeri crash signal na svakoj iteraciji (deterministicki, neovisno
+        # o ishodu blpop-a) prije nego sto zablokiramo na citanju reda.
+        if r.get("crash_mail_worker"):
+            r.delete("crash_mail_worker")
+            raise SimulatedCrash("Simulirani pad: mail-worker")
 
-        # Check crash signal in Redis
-        try:
-            if r.get("crash_mail_worker"):
-                r.delete("crash_mail_worker")
-                raise Exception("Simulirani pad: mail-worker")
-        except Exception:
-            raise
+        # Kratak timeout da se periodicki vracamo na provjeru crash signala
+        item = r.blpop(queue_name, timeout=5)
 
         if item is None:
             continue
@@ -63,6 +71,15 @@ while True:
             print(f"[MAIL][ERROR] Greška pri slanju: {e}")
             traceback.print_exc()
             continue
+    except SimulatedCrash as e:
+        # Prijavi u Sentry pa stvarno sruši proces (container se restarta po
+        # docker-compose restart politici, a poruke u redu prežive).
+        print(f"[MAIL][CRASH] {e}")
+        if SENTRY_ENABLED:
+            sentry_sdk.capture_exception(e)
+            sentry_sdk.flush(timeout=2.0)
+        traceback.print_exc()
+        sys.exit(1)
     except redis.exceptions.RedisError as re:
         print(f"[MAIL][ERROR] Redis error: {re}")
         time.sleep(5)
@@ -72,6 +89,8 @@ while True:
         break
     except Exception as e:
         print(f"[MAIL][ERROR] Neočekivana greška: {e}")
+        if SENTRY_ENABLED:
+            sentry_sdk.capture_exception(e)
         traceback.print_exc()
         time.sleep(2)
         continue

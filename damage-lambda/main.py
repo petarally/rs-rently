@@ -40,12 +40,33 @@ s3 = boto3.client(
 
 BUCKET_NAME = "stete-bucket"
 
+
+def ensure_bucket():
+    """Idempotentno osigurava da bucket postoji (LocalStack starta prazan)."""
+    try:
+        s3.head_bucket(Bucket=BUCKET_NAME)
+    except (BotoCoreError, ClientError):
+        try:
+            s3.create_bucket(Bucket=BUCKET_NAME)
+            print(f"[S3] Kreiran bucket '{BUCKET_NAME}'")
+        except (BotoCoreError, ClientError) as e:
+            print(f"[S3][WARN] Ne mogu kreirati bucket '{BUCKET_NAME}': {e}")
+
+
+@app.on_event("startup")
+def on_startup():
+    # Best-effort kreiranje pri pokretanju; ako LocalStack jos nije spreman,
+    # bucket se svejedno osigura pri prvom uploadu.
+    ensure_bucket()
+
+
 @app.post("/upload-damage")
 async def upload_damage(file: UploadFile = File(...)):
     try:
         if not file or not file.filename:
             raise HTTPException(status_code=400, detail="Neispravan file")
 
+        ensure_bucket()
         s3.upload_fileobj(file.file, BUCKET_NAME, file.filename)
 
         return {"message": f"Slika {file.filename} poslana na obradu.", "status": "pending"}

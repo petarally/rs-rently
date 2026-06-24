@@ -18,7 +18,21 @@
 \usepackage{titlesec}
 \usepackage{enumitem}
 \usepackage{parskip}
-\usetikzlibrary{positioning, arrows.meta, shapes.multipart, fit, calc, decorations.markings}
+\usetikzlibrary{positioning, arrows.meta, shapes.multipart, fit, calc, decorations.markings, backgrounds}
+
+% ---- Deployment node 3D effect (UML deployment node look) ----
+\newcommand{\deploybox}[2]{%
+  \begin{scope}[on background layer]
+    \draw[thick, fill=#2]
+      (#1.north west) -- ++(0.22,0.28)
+      -- ([shift={(0.22,0.28)}]#1.north east)
+      -- (#1.north east) -- cycle;
+    \draw[thick, fill=#2]
+      (#1.north east) -- ++(0.22,0.28)
+      -- ([shift={(0.22,0.28)}]#1.south east)
+      -- (#1.south east) -- cycle;
+  \end{scope}%
+}
 
 \geometry{margin=2.5cm}
 
@@ -348,300 +362,150 @@ Redis & 6379 & TCP & Message broker \\
 Za razvoj frontenda s automatskim osvježavanjem koristi se Vite dev server (\texttt{npm run dev} u \texttt{frontend/} direktoriju), koji aplikaciju servira na portu 5173.
 
 % ========================================================================
-\section{Dijagram klasa}
+\section{Dijagram raspodjele -- razvojno okruženje}
 
-Dijagram na slici~\ref{fig:class} prikazuje ključne klase i module sustava te njihove međusobne odnose. Isprekidane strelice označavaju mrežnu komunikaciju (HTTP ili Redis), a pune strelice označavaju izravnu ovisnost.
+Dijagram na slici~\ref{fig:deploy-dev} prikazuje fizičku raspodjelu (deployment) sustava u razvojnom okruženju. Svaki servis izvodi se kao zaseban Docker kontejner -- u UML notaciji raspodjele prikazan kao izvršni čvor (\guillemotleft container\guillemotright) s naznakom slike i izloženog porta. Svi kontejneri smješteni su unutar Docker bridge mreže \texttt{rent\_network}, koja je pak ugniježđena u jedan fizički host (\guillemotleft device\guillemotright{} Docker Host). Vanjski klijenti -- web preglednik korisnika i vozilo kao gRPC klijent -- nalaze se izvan hosta i komuniciraju kroz objavljene portove. Bridovi su označeni konkretnim komunikacijskim protokolom i portom.
 
 \begin{figure}[H]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  class/.style={
-    rectangle split,
-    rectangle split parts=3,
-    draw,
-    thick,
-    fill=blue!5,
-    minimum width=5cm,
-    font=\small,
-    align=center
-  },
-  dataclass/.style={
-    rectangle split,
-    rectangle split parts=2,
-    draw,
-    thick,
-    fill=yellow!10,
-    minimum width=4cm,
-    font=\small,
-    align=center
-  },
-  arrow/.style={-{Stealth[length=3mm]}, thick},
-  darrow/.style={-{Stealth[length=3mm]}, thick, dashed},
-  dep/.style={-{Triangle[length=3mm, open]}, thick}
+  cont/.style={rectangle, draw, thick, fill=blue!5, minimum width=3.1cm, minimum height=1.6cm, align=center, font=\small, inner sep=3pt},
+  infra/.style={rectangle, draw, thick, fill=orange!15, minimum width=3.1cm, minimum height=1.6cm, align=center, font=\small, inner sep=3pt},
+  client/.style={rectangle, draw, thick, fill=green!8, minimum width=3.2cm, minimum height=1.5cm, align=center, font=\small, inner sep=3pt},
+  link/.style={-{Stealth[length=2.5mm]}, thick},
+  qlink/.style={-{Stealth[length=2.5mm]}, thick, dashed, blue!60!black},
+  lbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt}
 ]
 
-% ---- Top row ----
+% ===== External clients =====
+\node[client] (browser) at (-2, 4.3) {\textbf{Web preglednik}\\{\scriptsize \guillemotleft device\guillemotright}\\{\scriptsize korisničko računalo}};
+\node[client] (vehicle) at (7, 4.3) {\textbf{Vozilo}\\{\scriptsize \guillemotleft device\guillemotright}\\{\scriptsize gRPC klijent}};
 
-% AuthService
-\node[class] (auth) at (0, 0) {
-  \textbf{AuthService}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - SECRET\_KEY: str \\
-  - app: FastAPI
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + login(user: User): dict \\
-  + verify(token: str): dict \\
-  + crash(): Exception
-  \end{tabular}
-};
+% ===== Containers =====
+\node[cont] (fe)   at (-2, -0.4) {\textbf{frontend}\\{\scriptsize \guillemotleft container\guillemotright{} Nginx}\\{\scriptsize Vue.js 3 build}\\{\scriptsize :3000 \textrightarrow{} :80}};
+\node[cont] (auth) at (-7, -4.2) {\textbf{auth-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}\\{\scriptsize JWT, :8000}};
+\node[cont] (book) at (-2.8, -4.2) {\textbf{booking-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}\\{\scriptsize :8001 \textrightarrow{} :8000}};
+\node[cont] (dmg)  at (1.6, -4.2) {\textbf{damage-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}\\{\scriptsize boto3, :8002}};
+\node[cont] (gps)  at (6.2, -4.2) {\textbf{gps-tracker}\\{\scriptsize \guillemotleft container\guillemotright{} gRPC}\\{\scriptsize :50051}};
+\node[cont] (mail) at (-7, -8.2) {\textbf{mail-worker}\\{\scriptsize \guillemotleft container\guillemotright{} daemon}\\{\scriptsize bez izloženog porta}};
+\node[infra] (redis) at (-2.4, -8.2) {\textbf{redis}\\{\scriptsize \guillemotleft container\guillemotright{} redis:alpine}\\{\scriptsize :6379}};
+\node[infra] (local) at (3, -8.2) {\textbf{localstack}\\{\scriptsize \guillemotleft container\guillemotright{} LocalStack}\\{\scriptsize S3 + DynamoDB :4566}};
 
-% User model
-\node[dataclass, right=2cm of auth] (user) {
-  \textbf{\guillemotleft BaseModel\guillemotright{} User}
-  \nodepart{second}
-  \begin{tabular}{l}
-  + username: str \\
-  + password: str
-  \end{tabular}
-};
+% 3D deployment-node effect
+\foreach \n in {fe,auth,book,dmg,gps,mail}{\deploybox{\n}{blue!5}}
+\foreach \n in {redis,local}{\deploybox{\n}{orange!15}}
+\foreach \n in {browser,vehicle}{\deploybox{\n}{green!8}}
 
-% ---- Middle row ----
+% ===== Communication links =====
+\draw[link] (browser.south) -- node[lbl, pos=0.28] {HTTP :3000} (fe.north);
+\draw[link] (vehicle.south) to[out=-90, in=25] node[lbl, pos=0.5] {gRPC :50051} (gps.north east);
+\draw[link] (fe.south west) to[out=-150, in=90] node[lbl, pos=0.5] {REST :8000} (auth.north);
+\draw[link] (fe.south) -- node[lbl, pos=0.5] {REST :8001} (book.north);
+\draw[link] (fe.south east) to[out=-30, in=90] node[lbl, pos=0.5] {REST :8002} (dmg.north);
+\draw[qlink] (book.south) to[out=-90, in=90] node[lbl, pos=0.5] {RPUSH email\_queue} (redis.north);
+\draw[qlink] (mail.south) to[out=-90, in=180] node[lbl, pos=0.45] {BLPOP} (redis.west);
+\draw[link] (dmg.south) to[out=-90, in=90] node[lbl, pos=0.5] {S3 (boto3)} (local.north);
 
-% BookingService
-\node[class, below=2.5cm of auth] (booking) at (-0.5, -4) {
-  \textbf{BookingService}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - r: redis.Redis \\
-  - app: FastAPI
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + create\_booking(car\_id: str, \\
-  \quad user\_email: str, \\
-  \quad authorization: str): dict \\
-  + crash\_mail\_worker(): dict
-  \end{tabular}
-};
-
-% DamageService
-\node[class] (damage) at (8.5, -4) {
-  \textbf{DamageService}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - s3: boto3.Client \\
-  - BUCKET\_NAME: str \\
-  - app: FastAPI
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + upload\_damage( \\
-  \quad file: UploadFile): dict
-  \end{tabular}
-};
-
-% ---- Bottom row ----
-
-% MailWorker
-\node[class] (mail) at (-0.5, -9) {
-  \textbf{MailWorker}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - r: redis.Redis \\
-  - queue\_name: str
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + run\_loop(): void \\
-  + process(data: dict): void \\
-  + check\_crash\_signal(): void
-  \end{tabular}
-};
-
-% GPSTrackerService
-\node[class] (gps) at (8.5, -9) {
-  \textbf{GPSTrackerService}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - server: grpc.Server \\
-  - max\_workers: int = 10
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + SendLocation( \\
-  \quad req: LocationUpdate, \\
-  \quad ctx: Context): Empty \\
-  + serve(): void
-  \end{tabular}
-};
-
-% LocationUpdate
-\node[dataclass, right=2cm of gps] (loc) at (14, -9) {
-  \textbf{\guillemotleft protobuf\guillemotright{} LocationUpdate}
-  \nodepart{second}
-  \begin{tabular}{l}
-  + car\_id: string \\
-  + latitude: double \\
-  + longitude: double
-  \end{tabular}
-};
-
-% LambdaHandler
-\node[class] (lambda) at (16, -4) {
-  \textbf{LambdaHandler}
-  \nodepart{second}
-  \begin{tabular}{l}
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + handler(event, \\
-  \quad context): dict
-  \end{tabular}
-};
-
-% Frontend APIClient
-\node[class] (api) at (4, -14) {
-  \textbf{APIClient (frontend)}
-  \nodepart{second}
-  \begin{tabular}{l}
-  - authAPI: AxiosInstance \\
-  - bookingAPI: AxiosInstance \\
-  - damageAPI: AxiosInstance
-  \end{tabular}
-  \nodepart{third}
-  \begin{tabular}{l}
-  + login(username, password): Promise \\
-  + verifyToken(token): Promise \\
-  + createBooking(carId, email): Promise \\
-  + uploadDamage(file): Promise
-  \end{tabular}
-};
-
-% ---- Arrows ----
-\draw[arrow] (auth) -- (user) node[midway, above, font=\scriptsize] {prima};
-\draw[arrow] (gps) -- (loc) node[midway, above, font=\scriptsize] {prima};
-\draw[darrow, blue!60] (booking) -- (mail) node[midway, left, font=\scriptsize, text=blue!60] {Redis RPUSH/BLPOP};
-\draw[darrow, red!60] (api) -| (auth) node[near end, left, font=\scriptsize, text=red!60] {HTTP POST/GET};
-\draw[darrow, red!60] (api) -- (booking) node[midway, right, font=\scriptsize, text=red!60] {HTTP POST};
-\draw[darrow, red!60] (api) -| (damage) node[near end, right, font=\scriptsize, text=red!60] {HTTP POST};
-\draw[darrow, gray] (damage) -- (lambda) node[midway, above, font=\scriptsize, text=gray] {S3 event trigger};
+% ===== Network and host boundaries =====
+\begin{scope}[on background layer]
+\node[draw, dashed, thick, blue!45, rounded corners=6pt,
+  fit=(fe)(auth)(book)(dmg)(gps)(mail)(redis)(local),
+  inner sep=20pt,
+  label={[blue!45, font=\bfseries\scriptsize]below:Docker bridge mreža: rent\_network}] (net) {};
+\node[draw, thick, accent, rounded corners=4pt,
+  fit=(net),
+  inner sep=12pt,
+  label={[accent, font=\bfseries]above:\guillemotleft device\guillemotright{} Docker Host (docker-compose)}] {};
+\end{scope}
 
 \end{tikzpicture}
 }%
-\caption{Dijagram klasa sustava RS-Rently}
-\label{fig:class}
+\caption{Dijagram raspodjele -- razvojno okruženje (Docker Compose + LocalStack)}
+\label{fig:deploy-dev}
 \end{figure}
+
+Cijeli sustav izvodi se na jednom fizičkom čvoru, a izolacija servisa ostvaruje se kontejnerizacijom umjesto zasebnim strojevima. To je tipično za razvoj: jedna \texttt{docker-compose up} naredba podiže cjelokupnu topologiju. Tri REST veze (\texttt{:8000}, \texttt{:8001}, \texttt{:8002}) idu od frontenda prema aplikacijskim servisima, dvije isprekidane veze prikazuju asinkroni Redis red (\texttt{RPUSH}/\texttt{BLPOP}) između Booking-servisa i Mail-workera, a Damage-service piše fotografije u S3 koji simulira LocalStack. LocalStack na ovom čvoru zamjenjuje stvarne AWS servise -- razlika prema produkciji vidljiva je na sljedećem dijagramu.
 
 % ========================================================================
-\section{UML dijagram komponenti}
+\section{Dijagram raspodjele -- produkcijsko okruženje}
 
-Dijagram na slici~\ref{fig:component} prikazuje sustav u UML notaciji komponenti. Svaka komponenta označena je stereotipom \guillemotleft component\guillemotright{} i UML ikonom komponente u gornjem desnom kutu. Pružena sučelja crtana su kao \emph{lollipop} kružići, a ovisnost potrošača prema pruženom sučelju označena je isprekidanom strelicom sa stereotipom \guillemotleft use\guillemotright. Cijela konfiguracija izvršava se unutar Docker mreže \texttt{rent\_network}.
+Dijagram na slici~\ref{fig:deploy-prod} prikazuje ciljnu (produkcijsku) raspodjelu sustava na AWS infrastrukturi. Ključna razlika u odnosu na razvojno okruženje jest da svaki infrastrukturni element koji LocalStack lokalno simulira ovdje postaje stvarni upravljani AWS servis: \texttt{localstack} se razlaže na \textbf{Amazon S3} (pohrana fotografija), \textbf{AWS Lambda} (obrada okinuta S3 eventom) i \textbf{Amazon DynamoDB} (perzistencija), Redis postaje \textbf{Amazon ElastiCache}, a aplikacijski kontejneri izvode se na \textbf{Amazon ECS / Fargate} klasteru iza \textbf{Amazon API Gateway-a}. Frontend se servira kao statički build iz S3 bucketa putem \textbf{CloudFront} CDN-a. Topologija veza ostaje identična -- mijenja se samo izvršno okruženje čvorova, što je izravna posljedica mikroservisne arhitekture.
 
 \begin{figure}[H]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  comp/.style={
-    rectangle, draw, thick,
-    fill=blue!5,
-    minimum width=3.8cm, minimum height=1.8cm,
-    font=\small, align=center,
-    inner sep=4pt
-  },
-  infra/.style={
-    rectangle, draw, thick,
-    fill=orange!15,
-    minimum width=3.4cm, minimum height=1.6cm,
-    font=\small, align=center,
-    inner sep=4pt
-  },
-  prov/.style={circle, draw, thick, fill=white, minimum size=5mm, inner sep=0pt},
-  use/.style={-{Stealth[length=2.5mm]}, thick, dashed, gray!70!black},
-  ifacelbl/.style={font=\scriptsize, fill=white, inner sep=1pt},
-  uselbl/.style={font=\scriptsize\itshape, fill=white, inner sep=1pt}
+  svc/.style={rectangle, draw, thick, fill=blue!5, minimum width=3.0cm, minimum height=1.5cm, align=center, font=\small, inner sep=3pt},
+  aws/.style={rectangle, draw, thick, fill=orange!18, minimum width=3.0cm, minimum height=1.5cm, align=center, font=\small, inner sep=3pt},
+  client/.style={rectangle, draw, thick, fill=green!8, minimum width=3.0cm, minimum height=1.4cm, align=center, font=\small, inner sep=3pt},
+  link/.style={-{Stealth[length=2.5mm]}, thick},
+  qlink/.style={-{Stealth[length=2.5mm]}, thick, dashed, blue!60!black},
+  evlink/.style={-{Stealth[length=2.5mm]}, thick, dotted, orange!70!black},
+  lbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt}
 ]
 
-% ===== Components =====
-\node[comp] (fe) at (0, 0) {\guillemotleft component\guillemotright\\\textbf{Frontend}\\{\scriptsize Vue.js 3 + Nginx}};
-\node[comp] (auth) at (-7, -5.5) {\guillemotleft component\guillemotright\\\textbf{AuthService}\\{\scriptsize FastAPI + JWT}};
-\node[comp] (book) at (-2.3, -5.5) {\guillemotleft component\guillemotright\\\textbf{BookingService}\\{\scriptsize FastAPI}};
-\node[comp] (dmg)  at (2.3, -5.5) {\guillemotleft component\guillemotright\\\textbf{DamageService}\\{\scriptsize FastAPI + boto3}};
-\node[comp] (gps)  at (7, -5.5) {\guillemotleft component\guillemotright\\\textbf{GPSTracker}\\{\scriptsize gRPC}};
-\node[comp] (mail) at (-5, -11) {\guillemotleft component\guillemotright\\\textbf{MailWorker}\\{\scriptsize Python daemon}};
-\node[infra] (redis) at (0, -11) {\guillemotleft component\guillemotright\\\textbf{Redis}\\{\scriptsize Alpine}};
-\node[infra] (local) at (5, -11) {\guillemotleft component\guillemotright\\\textbf{LocalStack}\\{\scriptsize S3 + DynamoDB}};
+% ===== External clients =====
+\node[client] (browser) at (-4.5, 4.8) {\textbf{Web preglednik}\\{\scriptsize \guillemotleft device\guillemotright}};
+\node[client] (vehicle) at (6.5, 4.8) {\textbf{Vozilo}\\{\scriptsize \guillemotleft device\guillemotright{} gRPC klijent}};
 
-% UML component icons (small stacked rectangles in top-right of each component)
-\foreach \n in {fe, auth, book, dmg, gps, mail, redis, local} {
-  \draw ([xshift=-0.55cm, yshift=-0.12cm]\n.north east) rectangle ++(0.4,0.28);
-  \draw ([xshift=-0.65cm, yshift=-0.16cm]\n.north east) rectangle ++(0.12,0.09);
-  \draw ([xshift=-0.65cm, yshift=-0.28cm]\n.north east) rectangle ++(0.12,0.09);
-}
+% ===== Edge / gateway =====
+\node[aws] (cf)    at (-6.5, 0.4) {\textbf{CloudFront}\\{\scriptsize \guillemotleft device\guillemotright{} CDN}};
+\node[aws] (s3web) at (-6.5, -2.4) {\textbf{Amazon S3}\\{\scriptsize statički frontend}\\{\scriptsize (Vue build)}};
+\node[svc] (apigw) at (-0.5, 0.4) {\textbf{API Gateway}\\{\scriptsize \guillemotleft device\guillemotright{} REST}};
 
-% ===== Provided interfaces (lollipops) =====
-\node[prov] (iAuth) at (-7, -3.3) {};
-\draw[thick] (auth.north) -- (iAuth.south);
-\node[ifacelbl, left=1pt of iAuth] {IAuth};
+% ===== ECS cluster services =====
+\node[svc] (auth) at (-6.5, -5.6) {\textbf{auth-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}};
+\node[svc] (book) at (-2.9, -5.6) {\textbf{booking-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}};
+\node[svc] (dmg)  at (0.7, -5.6) {\textbf{damage-service}\\{\scriptsize \guillemotleft container\guillemotright{} FastAPI}};
+\node[svc] (gps)  at (4.3, -5.6) {\textbf{gps-tracker}\\{\scriptsize \guillemotleft container\guillemotright{} gRPC}};
+\node[svc] (mail) at (-6.5, -9.2) {\textbf{mail-worker}\\{\scriptsize \guillemotleft container\guillemotright{} daemon}};
 
-\node[prov] (iBook) at (-2.3, -3.3) {};
-\draw[thick] (book.north) -- (iBook.south);
-\node[ifacelbl, right=1pt of iBook] {IBooking};
+% ===== Managed data services =====
+\node[aws] (redis)  at (-2.9, -9.2) {\textbf{ElastiCache}\\{\scriptsize Redis}};
+\node[aws] (s3)     at (0.7, -9.2) {\textbf{Amazon S3}\\{\scriptsize stete-bucket}};
+\node[aws] (lambda) at (4.3, -9.2) {\textbf{AWS Lambda}\\{\scriptsize obrada štete}};
+\node[aws] (dynamo) at (8.8, -7.4) {\textbf{DynamoDB}\\{\scriptsize users, cars,}\\{\scriptsize bookings}};
 
-\node[prov] (iDmg) at (2.3, -3.3) {};
-\draw[thick] (dmg.north) -- (iDmg.south);
-\node[ifacelbl, right=1pt of iDmg] {IDamage};
+% 3D deployment-node effect
+\foreach \n in {auth,book,dmg,gps,mail,apigw}{\deploybox{\n}{blue!5}}
+\foreach \n in {cf,s3web,redis,s3,lambda,dynamo}{\deploybox{\n}{orange!18}}
+\foreach \n in {browser,vehicle}{\deploybox{\n}{green!8}}
 
-\node[prov] (iGps) at (7, -3.3) {};
-\draw[thick] (gps.north) -- (iGps.south);
-\node[ifacelbl, right=1pt of iGps] {ILocation};
+% ===== Links =====
+\draw[link] (browser.south) to[out=-150, in=90] node[lbl, pos=0.35] {HTTPS} (cf.north);
+\draw[link] (cf.south) -- node[lbl, pos=0.5] {origin} (s3web.north);
+\draw[link] (browser.south) to[out=-30, in=120] node[lbl, pos=0.3] {REST/JSON} (apigw.north);
+\draw[link] (vehicle.south) to[out=-90, in=30] node[lbl, pos=0.55] {gRPC} (gps.north east);
+\draw[link] (apigw.south) to[out=-150, in=90] node[lbl, pos=0.5] {REST} (auth.north);
+\draw[link] (apigw.south) -- node[lbl, pos=0.45] {REST} (book.north);
+\draw[link] (apigw.south) to[out=-30, in=90] node[lbl, pos=0.5] {REST} (dmg.north);
+\draw[qlink] (book.south) to[out=-90, in=90] node[lbl, pos=0.5] {RPUSH} (redis.north);
+\draw[qlink] (mail.south) to[out=-90, in=180] node[lbl, pos=0.45] {BLPOP} (redis.west);
+\draw[link] (dmg.south) to[out=-90, in=90] node[lbl, pos=0.5] {PutObject} (s3.north);
+\draw[evlink] (s3.east) -- node[lbl, pos=0.5] {S3 event} (lambda.west);
+\draw[link] (auth.south) |- node[lbl, pos=0.25] {users} (dynamo.west);
+\draw[link] (book.south) |- node[lbl, pos=0.25] {bookings} (dynamo.south west);
 
-\node[prov] (iQueue) at (0, -8.7) {};
-\draw[thick] (redis.north) -- (iQueue.south);
-\node[ifacelbl, right=1pt of iQueue] {IEmailQueue};
-
-\node[prov] (iS3) at (5, -8.7) {};
-\draw[thick] (local.north) -- (iS3.south);
-\node[ifacelbl, right=1pt of iS3] {IS3};
-
-% ===== Dependency (use) arrows =====
-% Frontend -> Auth, Booking, Damage
-\draw[use] (fe.south west) to[out=-135, in=90] (iAuth.north)
-  node[uselbl, pos=0.55, above] {\guillemotleft use\guillemotright};
-\draw[use] (fe.south) -- (iBook.north)
-  node[uselbl, midway, right] {\guillemotleft use\guillemotright};
-\draw[use] (fe.south east) to[out=-45, in=90] (iDmg.north)
-  node[uselbl, pos=0.55, above] {\guillemotleft use\guillemotright};
-
-% Booking -> Redis queue
-\draw[use] (book.south) to[out=-90, in=120] (iQueue.north west)
-  node[uselbl, pos=0.6, left] {\guillemotleft use\guillemotright};
-
-% MailWorker -> Redis queue
-\draw[use] (mail.east) to[out=0, in=180] (iQueue.west)
-  node[uselbl, midway, above] {\guillemotleft use\guillemotright};
-
-% Damage -> LocalStack S3
-\draw[use] (dmg.south) to[out=-90, in=120] (iS3.north west)
-  node[uselbl, pos=0.6, left] {\guillemotleft use\guillemotright};
-
-% Docker network boundary
-\node[draw, dashed, very thick, blue!40, rounded corners=8pt,
-  fit=(fe)(auth)(book)(dmg)(gps)(mail)(redis)(local)(iAuth)(iGps)(iQueue)(iS3),
+% ===== Cluster and cloud boundaries =====
+\begin{scope}[on background layer]
+\node[draw, dashed, thick, accent, rounded corners=6pt,
+  fit=(auth)(book)(dmg)(gps)(mail),
   inner sep=16pt,
-  label={[blue!40, font=\bfseries]above:Docker Network: rent\_network}
-] {};
+  label={[accent, font=\bfseries\scriptsize]below:Amazon ECS / Fargate klaster}] (ecs) {};
+\node[draw, thick, orange!70!black, rounded corners=8pt,
+  fit=(cf)(s3web)(apigw)(ecs)(redis)(s3)(lambda)(dynamo),
+  inner sep=16pt,
+  label={[orange!70!black, font=\bfseries]above:\guillemotleft execution environment\guillemotright{} AWS Cloud}] {};
+\end{scope}
 
 \end{tikzpicture}
 }%
-\caption{UML dijagram komponenti sustava RS-Rently}
-\label{fig:component}
+\caption{Dijagram raspodjele -- ciljno produkcijsko okruženje (AWS)}
+\label{fig:deploy-prod}
 \end{figure}
 
-Pružena sučelja odgovaraju javnim API-jima pojedinih komponenti: \texttt{IAuth}, \texttt{IBooking} i \texttt{IDamage} su REST sučelja izložena FastAPI-jem, \texttt{ILocation} je gRPC sučelje definirano \texttt{gps.proto} datotekom, \texttt{IEmailQueue} je Redis list API koji dijele BookingService (producent) i MailWorker (konzument), a \texttt{IS3} je S3 sučelje koje LocalStack lokalno simulira.
+Usporedba dvaju dijagrama raspodjele izravno pokazuje vrijednost LocalStacka: razvojni i produkcijski dijagram dijele istu logičku topologiju, pa migracija na AWS ne zahtijeva preradu aplikacijskog koda nego samo zamjenu \texttt{endpoint\_url}-a i izvršnih čvorova. Točkasta veza \guillemotleft S3 event\guillemotright{} prikazuje obrazac koji u razvoju ostaje neaktivan (Lambda se ne okida), a u produkciji omogućuje automatsku obradu uploadanih fotografija šteta.
 
 % ========================================================================
 \section{Sekvencijski dijagram}

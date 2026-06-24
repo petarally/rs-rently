@@ -38,7 +38,7 @@
         <ol>
           <li>Odaberete sliku štete na vozilu</li>
           <li>Slika se uploada na LocalStack S3 bucket</li>
-          <li>Vraća se URL slike za pregled</li>
+          <li>Vraća se potvrda sa statusom <code>pending</code></li>
         </ol>
         <p><strong>S3 Bucket:</strong> <code>stete-bucket</code></p>
       </div>
