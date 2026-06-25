@@ -1,0 +1,18 @@
+# Dinamička konfiguracija — dijeljeni resilience middlewari.
+# Servisi ih referenciraju u docker-compose labelama kao "...@file".
+
+http:
+  middlewares:
+    # Retry: ako konekcija prema replici padne (mrežna greška), Traefik
+    # automatski pokuša sljedeću zdravu repliku istog servisa.
+    resilient-retry:
+      retry:
+        attempts: 4
+        initialInterval: "100ms"
+
+    # Circuit breaker: ako udio mrežnih grešaka prema servisu pređe 30%,
+    # sklopka se otvara i gateway odmah vraća 503 (fail-fast) umjesto da
+    # zatrpava servis koji ionako pada. Sama se zatvori kad se oporavi.
+    resilient-cb:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.30"

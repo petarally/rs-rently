@@ -18,13 +18,16 @@ Kompletan rent-a-car sustav izgrađen s mikroservisnom arhitekturom, Vue.js fron
 docker-compose up --build
 ```
 
-Sustav će biti dostupan na:
+Cijeli sustav je iza **Traefik gatewaya** (jedinstvena ulazna točka):
 
-- **Frontend**: http://localhost:3000
-- Auth Service: http://localhost:8000
-- Booking Service: http://localhost:8001
-- Damage Service: http://localhost:8002
+- **Frontend**: http://localhost (port 80)
+- Auth Service: http://localhost/api/auth (npr. `/api/auth/login`)
+- Booking Service: http://localhost/api/booking (npr. `/api/booking/bookings`)
+- Damage Service: http://localhost/api/damage (npr. `/api/damage/upload-damage`)
 - GPS Tracker (gRPC): localhost:50051
+- **Traefik dashboard**: http://localhost:8080 (pregled rutiranja i replika)
+
+Gateway automatski round-robin balansira promet preko svih replika svakog servisa.
 
 1. Otvori preglednik na **http://localhost:3000**
 2. Prijavi se s demo pristupom:
@@ -85,15 +88,99 @@ docker-compose restart frontend
 ```
 
 ```bash
-curl -X POST http://localhost:8000/login \
+curl -X POST http://localhost/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "admin"}'
 ```
 
 ```bash
 TOKEN="<tvoj_token>"
-curl -X POST "http://localhost:8001/bookings?car_id=BMW-X5&user_email=test@test.com" \
+curl -X POST "http://localhost/api/booking/bookings?car_id=BMW-X5&user_email=test@test.com" \
   -H "Authorization: Bearer $TOKEN"
+```
+
+## Horizontalno skaliranje
+
+Svi aplikacijski servisi su **stateless** (stanje je u Redisu / S3 / JWT-u), nemaju
+fiksne host-portove i otkrivaju se kroz Traefik gateway, pa se svaki može
+replicirati. `docker-compose.yaml` već diže po 2 replike svakog servisa.
+
+Ručno skaliranje na proizvoljan broj replika:
+
+```bash
+docker compose up --build -d \
+  --scale auth-service=3 \
+  --scale booking-service=3 \
+  --scale damage-service=3 \
+  --scale mail-worker=3 \
+  --scale gps-tracker=3
+```
+
+Provjera da promet ide na različite replike (Traefik round-robin):
+
+```bash
+docker compose ps                        # vidi sve replike
+for i in $(seq 1 6); do \
+  curl -s http://localhost/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"admin"}' >/dev/null; done
+docker compose logs auth-service | grep -c "POST /login"   # raspodijeljeno po replikama
+```
+
+- **REST servisi** (auth/booking/damage): Traefik round-robin po PathPrefixu.
+- **mail-worker**: competing consumers — svaka poruka iz `email_queue` (Redis `blpop`)
+  ide točno jednom workeru, pa N workera dijeli posao.
+- **gps-tracker**: gRPC (h2c) load-balansiran kroz Traefik `grpc` entrypoint.
+- **redis / localstack**: singletoni (dijeljeno stanje), namjerno se ne skaliraju.
+
+## Error handling raspodijeljenih sustava
+
+Skaliranje bez resilience-a je polovično — sustav ima error handling na dvije razine.
+
+### Na gatewayu (Traefik)
+
+- **Health-check load balancera** — Traefik svakih 10s gađa `/health` svake
+  replike; mrtve replike automatski izlaze iz rotacije (i vraćaju se kad ozdrave).
+- **Retry** (`resilient-retry@file`) — na mrežnu grešku prema replici gateway
+  automatski preusmjeri zahtjev na sljedeću zdravu repliku (failover).
+- **Circuit breaker** (`resilient-cb@file`) — kad udio mrežnih grešaka prema
+  servisu pređe 30%, sklopka se otvara i gateway odmah vraća 503 (fail-fast),
+  pa se ne zatrpava servis koji ionako pada. Sama se zatvori kad se oporavi.
+- **Timeouts** — `dialTimeout`/`responseHeaderTimeout` prema backendima i
+  `respondingTimeouts` na ulazu sprječavaju zaglavljene konekcije.
+
+### U servisima
+
+- **booking → Redis**: socket timeouti + retry s eksponencijalnim backoffom
+  (0.1→0.2→0.4s) + **in-process circuit breaker**; kod nedostupnog Redisa vraća
+  `503` + `Retry-After` (ne 500), tj. graceful degradacija.
+- **damage → S3**: connect/read timeouti + automatski boto3 retry (standard mode).
+- **mail-worker** (reliable messaging):
+  - **Reliable queue** (`BRPOPLPUSH` red→processing) + **crash recovery** pri
+    startu — poruka koju je obrađivao srušeni worker se ne gubi, vraća se u red.
+  - **DLQ** (`email_queue_dead`) — poison poruke (neispravan JSON, bez emaila)
+    i one s iscrpljenim pokušajima idu u dead-letter umjesto da blokiraju red.
+  - **Retry brojač** (`MAX_ATTEMPTS=3`) na prolazne greške slanja.
+  - **Idempotentnost** (`processed_bookings` set) — duplikat poruke (nakon
+    recoveryja/requeue-a) ne šalje mail dvaput.
+
+### Demo scenariji za obranu
+
+```bash
+# 1) Failover: ubij jednu auth repliku, promet i dalje radi (retry + healthcheck)
+docker compose up -d --scale auth-service=3
+docker kill $(docker compose ps -q auth-service | head -1)
+curl -s http://localhost/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}'        # i dalje 200
+
+# 2) Graceful degradacija: ugasi Redis -> booking vraća 503 (ne 500)
+docker compose stop redis
+curl -i "http://localhost/api/booking/bookings?car_id=BMW&user_email=t@t.com" \
+  -H "Authorization: Bearer X"                          # 503 + Retry-After
+
+# 3) DLQ: pošalji neispravnu poruku u red pa pogledaj dead-letter
+docker compose exec redis redis-cli RPUSH email_queue 'nije-json'
+docker compose exec redis redis-cli LRANGE email_queue_dead 0 -1
 ```
 
 ```bash
@@ -140,7 +227,8 @@ Ovaj projekt demonstrira:
 1. **Mikroservisna arhitektura** - odvojeni servisi
 2. **Service Discovery** - Docker DNS
 3. **Asinkrona komunikacija** - Redis queue
-4. **API Gateway pattern** - Frontend kao gateway
+4. **API Gateway pattern** - Traefik (jedinstvena ulazna točka + load balancer)
+9. **Horizontalno skaliranje** - stateless servisi iza gatewaya, `--scale`
 5. **Različiti protokoli** - REST, gRPC, Message Queue
 6. **Caching** - Redis
 7. **Cloud services** - AWS simulacija

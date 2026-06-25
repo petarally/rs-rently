@@ -57,6 +57,13 @@ def login(user: User):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/health")
+def health():
+    # Liveness: proces je živ i može primati zahtjeve. Gateway ovo koristi da
+    # mrtve replike izbaci iz load-balance rotacije.
+    return {"status": "ok"}
+
+
 @app.get("/__debug/crash")
 def crash():
     raise Exception("Simulirani pad: auth-service")

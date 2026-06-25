@@ -1,17 +1,17 @@
 import axios from "axios";
 
-const API_BASE_URL = "http://localhost";
-
+// Svi pozivi idu kroz Traefik gateway (isti origin kao frontend).
+// Gateway po PathPrefixu rutira i load-balansira preko svih replika servisa.
 const authAPI = axios.create({
-  baseURL: `${API_BASE_URL}:8000`,
+  baseURL: "/api/auth",
 });
 
 const bookingAPI = axios.create({
-  baseURL: `${API_BASE_URL}:8001`,
+  baseURL: "/api/booking",
 });
 
 const damageAPI = axios.create({
-  baseURL: `${API_BASE_URL}:8002`,
+  baseURL: "/api/damage",
 });
 
 const addAuthToken = (config) => {

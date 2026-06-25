@@ -1,8 +1,25 @@
 services:
+  # ---------------------------------------------------------------------------
+  # Gateway / reverse proxy + load balancer.
+  # Jedina ulazna točka sustava. Otkriva servise preko Docker labela i
+  # automatski round-robin balansira promet preko SVIH replika svakog servisa.
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    ports:
+      - "80:80"        # HTTP: frontend + REST API (/api/*)
+      - "50051:50051"  # gRPC: gps-tracker
+      - "8080:8080"    # Traefik dashboard (http://localhost:8080)
+    volumes:
+      - ./gateway/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./gateway/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - rent_network
+
+  # --- Infrastruktura (singletoni; ne skaliraju se) --------------------------
   localstack:
     image: localstack/localstack
-    ports:
-      - "4566:4566"
     environment:
       - SERVICES=dynamodb,s3
     networks:
@@ -10,15 +27,12 @@ services:
 
   redis:
     image: redis:alpine
-    ports:
-      - "6379:6379"
     networks:
       - rent_network
 
+  # --- Aplikacijski servisi (svi stateless → horizontalno skalabilni) --------
   auth-service:
     build: ./auth-service
-    ports:
-      - "8000:8000"
     environment:
       - DYNAMODB_URL=http://localstack:4566
       - SENTRY_DSN=${SENTRY_DSN}
@@ -27,11 +41,21 @@ services:
       - localstack
     networks:
       - rent_network
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.routers.auth.middlewares=auth-strip,resilient-retry@file,resilient-cb@file"
+      - "traefik.http.middlewares.auth-strip.stripprefix.prefixes=/api/auth"
+      - "traefik.http.services.auth.loadbalancer.server.port=8000"
+      - "traefik.http.services.auth.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.auth.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.auth.loadbalancer.healthcheck.timeout=3s"
 
   booking-service:
     build: ./booking-service
-    ports:
-      - "8001:8000"
     environment:
       - REDIS_HOST=redis
       - DYNAMODB_URL=http://localstack:4566
@@ -42,11 +66,21 @@ services:
       - redis
     networks:
       - rent_network
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.booking.rule=PathPrefix(`/api/booking`)"
+      - "traefik.http.routers.booking.entrypoints=web"
+      - "traefik.http.routers.booking.middlewares=booking-strip,resilient-retry@file,resilient-cb@file"
+      - "traefik.http.middlewares.booking-strip.stripprefix.prefixes=/api/booking"
+      - "traefik.http.services.booking.loadbalancer.server.port=8000"
+      - "traefik.http.services.booking.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.booking.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.booking.loadbalancer.healthcheck.timeout=3s"
 
   damage-service:
     build: ./damage-lambda
-    ports:
-      - "8002:8000"
     environment:
       - S3_URL=http://localstack:4566
       - SENTRY_DSN=${SENTRY_DSN}
@@ -55,7 +89,21 @@ services:
       - localstack
     networks:
       - rent_network
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.damage.rule=PathPrefix(`/api/damage`)"
+      - "traefik.http.routers.damage.entrypoints=web"
+      - "traefik.http.routers.damage.middlewares=damage-strip,resilient-retry@file,resilient-cb@file"
+      - "traefik.http.middlewares.damage-strip.stripprefix.prefixes=/api/damage"
+      - "traefik.http.services.damage.loadbalancer.server.port=8000"
+      - "traefik.http.services.damage.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.damage.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.damage.loadbalancer.healthcheck.timeout=3s"
 
+  # Async worker — competing consumers preko Redis liste (blpop).
+  # Nema objavljenog porta; svaka replika čupa poruke iz istog reda.
   mail-worker:
     build: ./mail-worker
     restart: on-failure
@@ -67,27 +115,38 @@ services:
       - redis
     networks:
       - rent_network
+    deploy:
+      replicas: 2
 
+  # gRPC servis — balansira se preko Traefik "grpc" entrypointa (h2c).
   gps-tracker:
     build: ./gps-tracker
-    ports:
-      - "50051:50051"
-    environment:
-      - SENTRY_DSN=${SENTRY_DSN}
-      - SENTRY_ENV=${SENTRY_ENV}
     networks:
       - rent_network
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gps.rule=PathPrefix(`/GPSTracker`)"
+      - "traefik.http.routers.gps.entrypoints=grpc"
+      - "traefik.http.services.gps.loadbalancer.server.port=50051"
+      - "traefik.http.services.gps.loadbalancer.server.scheme=h2c"
 
+  # Statički frontend (nginx). Posljednji u prioritetu — hvata sve što nije /api/*.
   frontend:
     build: ./frontend
-    ports:
-      - "3000:80"
     depends_on:
       - auth-service
       - booking-service
       - damage-service
     networks:
       - rent_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
 
 networks:
   rent_network:

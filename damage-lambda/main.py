@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 try:
     import sentry_sdk
@@ -30,12 +31,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Timeouti + automatski retry s backoffom prema S3 (standard mode = do 3
+# pokušaja uz exponential backoff na prolazne/throttling greške).
 s3 = boto3.client(
     's3',
     endpoint_url=os.getenv("S3_URL", "http://localstack:4566"),
     aws_access_key_id="test",
     aws_secret_access_key="test",
-    region_name="us-east-1"
+    region_name="us-east-1",
+    config=Config(
+        connect_timeout=3,
+        read_timeout=5,
+        retries={"max_attempts": 3, "mode": "standard"},
+    ),
 )
 
 BUCKET_NAME = "stete-bucket"
@@ -76,6 +84,12 @@ async def upload_damage(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+def health():
+    # Liveness: gateway izbacuje mrtve replike iz rotacije.
+    return {"status": "ok"}
 
 
 @app.get("/__debug/crash")

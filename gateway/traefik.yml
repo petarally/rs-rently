@@ -1,0 +1,47 @@
+# Traefik statička konfiguracija (gateway / reverse proxy + load balancer).
+# Dinamička konfiguracija (rute, servisi, middleware) dolazi iz Docker labela
+# pojedinih servisa u docker-compose.yaml.
+
+entryPoints:
+  # HTTP promet (frontend + REST servisi preko /api/*)
+  web:
+    address: ":80"
+    transport:
+      respondingTimeouts:
+        readTimeout: "15s"
+        writeTimeout: "15s"
+        idleTimeout: "180s"
+  # gRPC promet (gps-tracker) na zasebnoj ulaznoj točki
+  grpc:
+    address: ":50051"
+  # Traefik dashboard / API / health
+  traefik:
+    address: ":8080"
+
+# Timeouti prema backend servisima (sprječavaju da spori/zaglavljeni servis
+# drži konekciju zauvijek otvorenom).
+serversTransport:
+  forwardingTimeouts:
+    dialTimeout: "5s"
+    responseHeaderTimeout: "10s"
+
+# Dashboard na http://localhost:8080 — pregled live rutiranja i replika.
+api:
+  dashboard: true
+  insecure: true
+
+# Health endpoint (koristi se i u docker healthchecku)
+ping:
+  entryPoint: traefik
+
+providers:
+  docker:
+    # Servisi se ne izlažu automatski — samo oni s "traefik.enable=true".
+    exposedByDefault: false
+  # Dijeljeni resilience middlewari (retry, circuit breaker) — definirani u datoteci.
+  file:
+    filename: /etc/traefik/dynamic.yml
+
+# Prometheus metrike gatewaya (broj zahtjeva po servisu/replici itd.)
+metrics:
+  prometheus: {}
