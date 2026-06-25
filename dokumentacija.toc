@@ -3,29 +3,34 @@
 \contentsline {section}{\numberline {2}Arhitektura sustava}{3}{section.2}%
 \contentsline {subsection}{\numberline {2.1}Auth-service}{3}{subsection.2.1}%
 \contentsline {subsection}{\numberline {2.2}Booking-service}{3}{subsection.2.2}%
-\contentsline {subsection}{\numberline {2.3}Damage-service}{3}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.3}Damage-service}{4}{subsection.2.3}%
 \contentsline {subsection}{\numberline {2.4}Mail-worker}{4}{subsection.2.4}%
 \contentsline {subsection}{\numberline {2.5}GPS-tracker}{4}{subsection.2.5}%
 \contentsline {subsection}{\numberline {2.6}Frontend}{4}{subsection.2.6}%
 \contentsline {subsection}{\numberline {2.7}Infrastruktura}{5}{subsection.2.7}%
 \contentsline {subsection}{\numberline {2.8}Cross-Origin Resource Sharing}{5}{subsection.2.8}%
 \contentsline {section}{\numberline {3}Tehnologije}{5}{section.3}%
-\contentsline {section}{\numberline {4}Funkcionalnosti}{5}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Autentifikacija i autorizacija}{5}{subsection.4.1}%
+\contentsline {section}{\numberline {4}Funkcionalnosti}{6}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Autentifikacija i autorizacija}{6}{subsection.4.1}%
 \contentsline {subsection}{\numberline {4.2}Rezervacija vozila}{6}{subsection.4.2}%
 \contentsline {subsection}{\numberline {4.3}Evidencija šteta}{6}{subsection.4.3}%
 \contentsline {subsection}{\numberline {4.4}GPS praćenje}{6}{subsection.4.4}%
-\contentsline {subsection}{\numberline {4.5}Praćenje grešaka}{6}{subsection.4.5}%
+\contentsline {subsection}{\numberline {4.5}Praćenje grešaka}{7}{subsection.4.5}%
 \contentsline {section}{\numberline {5}Komunikacijski protokoli}{7}{section.5}%
 \contentsline {subsection}{\numberline {5.1}REST API (HTTP/JSON)}{7}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}gRPC (Protocol Buffers)}{7}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.2}gRPC (Protocol Buffers)}{8}{subsection.5.2}%
 \contentsline {subsection}{\numberline {5.3}Redis Message Queue}{8}{subsection.5.3}%
-\contentsline {section}{\numberline {6}Struktura projekta}{8}{section.6}%
-\contentsline {section}{\numberline {7}Docker i pokretanje}{9}{section.7}%
-\contentsline {section}{\numberline {8}Dijagram raspodjele -- razvojno okruženje}{10}{section.8}%
-\contentsline {section}{\numberline {9}Dijagram raspodjele -- produkcijsko okruženje}{11}{section.9}%
-\contentsline {section}{\numberline {10}Sekvencijski dijagram}{12}{section.10}%
-\contentsline {section}{\numberline {11}Konceptualni model domene}{13}{section.11}%
-\contentsline {subsection}{\numberline {11.1}Opseg MVP-a}{14}{subsection.11.1}%
-\contentsline {subsection}{\numberline {11.2}Predviđena proširenja}{14}{subsection.11.2}%
-\contentsline {section}{\numberline {12}Zaključak}{15}{section.12}%
+\contentsline {section}{\numberline {6}API Gateway i usmjeravanje prometa}{9}{section.6}%
+\contentsline {section}{\numberline {7}Horizontalno skaliranje}{9}{section.7}%
+\contentsline {section}{\numberline {8}Otpornost na pogreške (resilience)}{10}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Razina gatewaya}{10}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Razina servisa}{10}{subsection.8.2}%
+\contentsline {section}{\numberline {9}Struktura projekta}{11}{section.9}%
+\contentsline {section}{\numberline {10}Docker i pokretanje}{12}{section.10}%
+\contentsline {section}{\numberline {11}Dijagram raspodjele -- razvojno okruženje}{13}{section.11}%
+\contentsline {section}{\numberline {12}Dijagram raspodjele -- produkcijsko okruženje}{13}{section.12}%
+\contentsline {section}{\numberline {13}Sekvencijski dijagram}{14}{section.13}%
+\contentsline {section}{\numberline {14}Konceptualni model domene}{15}{section.14}%
+\contentsline {subsection}{\numberline {14.1}Opseg MVP-a}{17}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}Predviđena proširenja}{17}{subsection.14.2}%
+\contentsline {section}{\numberline {15}Zaključak}{18}{section.15}%

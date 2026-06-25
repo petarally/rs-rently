@@ -131,12 +131,12 @@ RS-Rently je projekt za kolegij Raspodijeljeni sustavi -- distribuirani sustav z
 
 Ideja je bila koristiti više komunikacijskih protokola jer svaki ima drugačiji use case. REST je odabran za standardnu komunikaciju s frontendom, gRPC za prijenos GPS koordinata zbog nižeg overheada, a Redis queue za asinkronu obradu e-mailova -- korisniku se odmah vraća potvrda, a slanje maila odvija se u pozadini.
 
-Cijeli sustav pokreće se jednom \texttt{docker-compose} naredbom. AWS infrastruktura simulira se lokalno putem LocalStacka, što eliminira potrebu za oblačnim računom u razvoju.
+Cijeli sustav pokreće se jednom \texttt{docker-compose} naredbom. AWS infrastruktura simulira se lokalno putem LocalStacka, što eliminira potrebu za cloud računom u razvoju.
 
 % ========================================================================
 \section{Arhitektura sustava}
 
-Svaka poslovna funkcija izdvojena je u zaseban servis. Servisi ne dijele bazu podataka ni memoriju -- jedina sprega je mrežna komunikacija. Svih šest servisa i dvije infrastrukturne komponente smješteni su na zajedničku Docker mrežu \texttt{rent\_network}, unutar koje se pronalaze putem Docker DNS rezolucije.
+Svaka poslovna funkcija izdvojena je u zaseban servis. Servisi ne dijele bazu podataka ni memoriju -- jedina sprega je mrežna komunikacija. Svih šest servisa i infrastrukturne komponente (Redis, LocalStack te Traefik kao gateway) smješteni su na zajedničku Docker mrežu \texttt{rent\_network}, unutar koje se pronalaze putem Docker DNS rezolucije. Vanjski promet ne ulazi izravno u servise, nego isključivo kroz gateway (vidi poglavlje o API Gatewayu).
 
 \subsection{Auth-service}
 
@@ -152,9 +152,9 @@ Damage-service zadužen je za evidenciju oštećenja vozila putem uploada fotogr
 
 \subsection{Mail-worker}
 
-Mail-worker je jedini servis koji ne izlaže nikakav API. Umjesto toga, radi kao pozadinski proces u beskonačnoj petlji, neprekidno osluškujući Redis red \texttt{email\_queue} pomoću blokirajućeg čitanja (\texttt{BLPOP}) s timeoutom od 5 sekundi. Kada poruka stigne, parsira JSON podatke, izvlači e-mail adresu i identifikator vozila te simulira slanje e-maila (u ovoj verziji to je \texttt{time.sleep(2)} s ispisom u log). Između svake iteracije provjerava i Redis ključ \texttt{crash\_mail\_worker} -- mehanizam koji omogućuje da Booking-service na zahtjev izazove simulirani pad workera, što je korisno za demonstraciju Sentry integracije.
+Mail-worker je jedini servis koji ne izlaže nikakav API. Umjesto toga, radi kao pozadinski proces u beskonačnoj petlji koji obrađuje Redis red \texttt{email\_queue}. Poruke se ne čitaju običnim \texttt{BLPOP}-om, nego se naredbom \texttt{BRPOPLPUSH} atomarno premještaju u zasebnu \texttt{processing} listu (\emph{reliable queue}) -- time poruka koju obrađuje srušeni worker nije izgubljena, nego se pri sljedećem pokretanju vraća u red. Kada poruka stigne, worker parsira JSON, izvlači e-mail adresu i identifikator vozila te simulira slanje e-maila (\texttt{time.sleep(2)} s ispisom u log). Između svake iteracije provjerava i Redis ključ \texttt{crash\_mail\_worker} -- mehanizam koji omogućuje da Booking-service na zahtjev izazove simulirani pad workera, što je korisno za demonstraciju Sentry integracije.
 
-Prednost ovog pristupa je što poruke preživljavaju restart workera -- čak i ako Mail-worker padne, Booking-service nastavlja primati zahtjeve, a poruke u redu čekaju na obradu. Redis tu djeluje kao buffer koji apsorbira nagle skokove u prometu.
+Worker je projektiran za pouzdanu obradu: neispravne poruke i one s iscrpljenim brojem pokušaja odlažu se u \emph{dead-letter} red, a skup obrađenih identifikatora osigurava idempotentnost. Ti su mehanizmi detaljno opisani u poglavlju o otpornosti na pogreške. Budući da je servis \emph{stateless} i da se poruke iz reda distribuiraju po načelu \emph{competing consumers}, može se pokrenuti u više replika koje dijele isti red.
 
 \subsection{GPS-tracker}
 
@@ -166,7 +166,7 @@ GPS koordinate su male, strukturirane poruke koje se šalju u visokoj frekvencij
 
 Frontend je izgrađen u Vue.js 3 koristeći Composition API. Aplikacija se sastoji od pet komponenti: \texttt{Login} za prijavu, \texttt{Dashboard} za pregled sustava, \texttt{Bookings} za kreiranje rezervacija, \texttt{DamageUpload} za upload slika šteta i \texttt{CrashControls} za testiranje padova servisa. Vue Router štiti zaštićene rute provjerom prisutnosti tokena u \texttt{localStorage} -- ako token ne postoji, korisnik se preusmjerava na stranicu za prijavu.
 
-Komunikacija s backendom apstrahirana je kroz centralni modul \texttt{api.js} koji kreira tri Axios instance -- po jednu za svaki REST servis. Interceptor automatski dodaje JWT token u zaglavlje svakog zahtjeva prema Booking i Damage servisima, čime se eliminira potreba za ručnim upravljanjem autentifikacijom u svakoj komponenti.
+Komunikacija s backendom apstrahirana je kroz centralni modul \texttt{api.js} koji kreira tri Axios instance -- po jednu za svaki REST servis. Sve tri koriste \emph{relativne} putanje kroz gateway (\texttt{/api/auth}, \texttt{/api/booking}, \texttt{/api/damage}) umjesto apsolutnih URL-ova s portovima, pa je frontend neovisan o broju i smještaju replika. Interceptor automatski dodaje JWT token u zaglavlje svakog zahtjeva prema Booking i Damage servisima, čime se eliminira potreba za ručnim upravljanjem autentifikacijom u svakoj komponenti.
 
 U produkciji se Vue aplikacija kompajlira u statičke datoteke i servira putem Nginx-a, koji ujedno brine o SPA routingu (sve rute preusmjerava na \texttt{index.html}), GZIP kompresiji i cachiranju statičkih resursa.
 
@@ -176,14 +176,14 @@ Dva infrastrukturna servisa čine temelj na kojem ostali servisi grade svoju fun
 
 \subsection{Cross-Origin Resource Sharing}
 
-Budući da se frontend (\texttt{:3000}) i backend servisi (\texttt{:8000}, \texttt{:8001}, \texttt{:8002}) u razvojnom okruženju poslužuju s različitih portova, svaki zahtjev iz preglednika je tehnički \emph{cross-origin} prema SOP-u (Same-Origin Policy). Kako bi se izbjegle greške tipa \emph{CORS preflight failed}, svi FastAPI servisi uključuju \texttt{CORSMiddleware} s permisivnom konfiguracijom (\texttt{allow\_origins=[\textquotedbl*\textquotedbl]}). Ovakva postavka prihvatljiva je u demonstracijskom okruženju; u produkciji bi se ograničila na konkretnu domenu frontenda.
+Uvođenjem gatewaya frontend i svi REST servisi poslužuju se s \emph{istog ishodišta} (\texttt{:80}), pa zahtjevi iz preglednika više nisu \emph{cross-origin} i CORS u praksi nije potreban. Servisi i dalje zadržavaju \texttt{CORSMiddleware} s permisivnom konfiguracijom (\texttt{allow\_origins=[\textquotedbl*\textquotedbl]}) kao sigurnosnu mrežu za izravan pristup tijekom razvoja (npr. Vite dev poslužitelj na \texttt{:5173} ili izravno gađanje servisa). Vrijedi prisjetiti se izvornog problema: dok su se frontend i servisi posluživali s različitih portova, svaki je zahtjev bio cross-origin prema SOP-u (Same-Origin Policy) i bez \texttt{CORSMiddleware}-a rezultirao bi greškom \emph{CORS preflight failed}. U produkciji bi se \texttt{allow\_origins} ograničio na konkretnu domenu frontenda.
 
 % ========================================================================
 \section{Tehnologije}
 
 Svi backend servisi napisani su u \textbf{Python 3.10}. Za tri servisa koji izlažu REST API odabran je \textbf{FastAPI} -- asinkroni web framework koji uz minimalan kod pruža automatsku validaciju podataka putem Pydantic modela, automatsko generiranje OpenAPI (Swagger) dokumentacije i visoke performanse temeljene na Starlette/Uvicorn stacku. GPS-tracker koristi \textbf{gRPC} s \textbf{Protocol Buffers} definicijama sučelja, što omogućuje strogo tipiziranu, binarno serijaliziranu komunikaciju s nižim overheadom od JSON-a.
 
-Za asinkronu komunikaciju između servisa koristi se \textbf{Redis}, in-memory pohrana podataka koja ovdje funkcionira kao message broker. Pristup AWS resursima ostvaruje se putem \textbf{boto3} SDK-a, dok \textbf{LocalStack} omogućuje lokalno pokretanje S3 i DynamoDB servisa bez oblačne infrastrukture. Autentifikacija se temelji na \textbf{JWT} tokenima implementiranim pomoću \textbf{PyJWT} biblioteke.
+Za asinkronu komunikaciju između servisa koristi se \textbf{Redis}, in-memory pohrana podataka koja ovdje funkcionira kao message broker. Pristup AWS resursima ostvaruje se putem \textbf{boto3} SDK-a, dok \textbf{LocalStack} omogućuje lokalno pokretanje S3 i DynamoDB servisa bez cloud infrastrukture. Autentifikacija se temelji na \textbf{JWT} tokenima implementiranim pomoću \textbf{PyJWT} biblioteke.
 
 Frontend koristi \textbf{Vue.js 3} s Composition API-jem, \textbf{Vue Router} za upravljanje rutama i \textbf{Axios} kao HTTP klijent. Build proces odvija se putem \textbf{Vite} alata, a produkcijsko posluživanje preuzima \textbf{Nginx}. Svi servisi pakirani su u \textbf{Docker} kontejnere i orkestrirani putem \textbf{Docker Compose-a}. Za centralizirano praćenje grešaka integriran je \textbf{Sentry} sa StarletteIntegration na backendu i browserTracingIntegration na frontendu.
 
@@ -270,6 +270,98 @@ U usporedbi s REST-om, binarna serijalizacija daje manje poruke od JSON-a, HTTP/
 \subsection{Redis Message Queue}
 
 Komunikacija između Booking-servisa i Mail-workera odvija se putem Redis liste \texttt{email\_queue}. Booking-service dodaje poruke naredbom \texttt{RPUSH}, a Mail-worker ih čita blokirajućom naredbom \texttt{BLPOP} s timeoutom od 5 sekundi. Ovo je klasičan producer-consumer obrazac koji donosi tri ključne prednosti: vremensko odvajanje (producent i konzument ne moraju raditi istovremeno), apsorpcija opterećenja (Redis služi kao buffer pri naglim skokovima) i otpornost na padove (poruke preživljavaju restart workera).
+
+% ========================================================================
+\section{API Gateway i usmjeravanje prometa}
+
+U izvornoj inačici frontend je komunicirao izravno s pojedinim servisima na zasebnim portovima (\texttt{:8000}, \texttt{:8001}, \texttt{:8002}). Takva izravna sprega ima dva problema: klijent mora poznavati topologiju i portove svakog servisa, a svaki je poziv \emph{cross-origin} (vidi potpoglavlje o CORS-u). Stoga je uveden \textbf{Traefik} (verzija 3.1) kao \emph{reverse proxy} i jedinstvena ulazna točka cijelog sustava.
+
+Sav promet sada ulazi kroz gateway na portu \texttt{:80}, koji ga usmjerava prema odgovarajućem servisu na temelju putanje (\texttt{PathPrefix}):
+
+\begin{table}[H]
+\centering
+\caption{Pravila usmjeravanja na gatewayu}
+\label{tab:routing}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Ulazna putanja} & \textbf{Servis} & \textbf{Napomena} \\
+\midrule
+\texttt{/api/auth/*}    & auth-service    & \texttt{StripPrefix} uklanja \texttt{/api/auth} \\
+\texttt{/api/booking/*} & booking-service & \texttt{StripPrefix} uklanja \texttt{/api/booking} \\
+\texttt{/api/damage/*}  & damage-service  & \texttt{StripPrefix} uklanja \texttt{/api/damage} \\
+\texttt{/} (ostalo)     & frontend        & SPA, najniži prioritet (hvata sve ostalo) \\
+gRPC \texttt{:50051}    & gps-tracker     & zasebna ulazna točka, shema \texttt{h2c} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Traefik otkriva servise dinamički, čitanjem Docker labela (\texttt{provider.docker}, uz \texttt{exposedByDefault=false} -- izlažu se samo servisi s eksplicitnim \texttt{traefik.enable=true}). Time nema potrebe za ručnom statičkom konfiguracijom rutiranja: dodavanjem nove replike ili servisa gateway ga automatski uključi. Traefik dashboard dostupan je na portu \texttt{:8080} i nudi pregled aktivnih ruta, servisa i replika u stvarnom vremenu, a izložene su i Prometheus metrike.
+
+Ključna posljedica je da se frontend i svi REST servisi sada poslužuju s \emph{istog ishodišta} (gateway na \texttt{:80}), pa CORS više nije potreban -- \texttt{api.js} koristi relativne putanje (\texttt{/api/auth}, \texttt{/api/booking}, \texttt{/api/damage}) umjesto apsolutnih URL-ova s portovima.
+
+% ========================================================================
+\section{Horizontalno skaliranje}
+
+Svi aplikacijski servisi projektirani su kao \emph{stateless} -- ne čuvaju lokalno stanje, nego se oslanjaju na dijeljene resurse (Redis, S3) ili na samodostatne tokene (JWT). Zahvaljujući tome svaki se servis može pokrenuti u proizvoljnom broju identičnih replika, a gateway promet ravnomjerno raspoređuje među njima (\emph{round-robin}).
+
+Preduvjet za skaliranje bilo je uklanjanje fiksnih \emph{host} portova s aplikacijskih servisa: dok je svaki servis objavljivao konkretan port na domaćinu, pokretanje druge replike rezultiralo bi sukobom (\emph{address already in use}). Nakon prelaska na otkrivanje preko gatewaya, servisi izlažu portove samo unutar Docker mreže, pa replikacija postaje trivijalna:
+
+\begin{lstlisting}[caption={Skaliranje na proizvoljan broj replika}]
+docker compose up --build -d \
+  --scale auth-service=3 \
+  --scale booking-service=3 \
+  --scale damage-service=3 \
+  --scale mail-worker=3 \
+  --scale gps-tracker=3
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\caption{Mehanizam skaliranja po servisu}
+\label{tab:scaling}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Servis} & \textbf{Kako se raspoređuje promet} \\
+\midrule
+auth / booking / damage & Traefik round-robin po HTTP-u (REST) \\
+mail-worker             & \emph{competing consumers} -- svaka poruka iz reda (\texttt{BRPOPLPUSH}) pripadne točno jednom workeru \\
+gps-tracker             & Traefik gRPC (\texttt{h2c}) load balancing \\
+redis / localstack      & singletoni s dijeljenim stanjem -- namjerno se ne skaliraju \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\texttt{docker-compose.yaml} već u zadanim postavkama diže po dvije replike svakog servisa (\texttt{deploy.replicas: 2}), čime je horizontalna skalabilnost vidljiva odmah pri pokretanju.
+
+% ========================================================================
+\section{Otpornost na pogreške (resilience)}
+
+Skaliranje bez mehanizama oporavka od grešaka bilo bi nepotpuno -- u raspodijeljenom sustavu kvarovi pojedinih čvorova i mreže su \emph{očekivani}, ne iznimni. Sustav stoga primjenjuje obrasce otpornosti na dvije razine: na gatewayu i unutar samih servisa.
+
+\subsection{Razina gatewaya}
+
+\begin{itemize}
+  \item \textbf{Health-check load balancera} -- Traefik svakih 10 sekundi provjerava \texttt{/health} endpoint svake replike; replika koja ne odgovara automatski izlazi iz rotacije i vraća se tek kad ponovno postane zdrava.
+  \item \textbf{Retry} -- na mrežnu grešku prema replici gateway automatski preusmjerava zahtjev na sljedeću zdravu repliku istog servisa (\emph{failover}).
+  \item \textbf{Circuit breaker} -- kada udio mrežnih grešaka prema servisu prijeđe 30\% ($\mathit{NetworkErrorRatio} > 0{,}30$), sklopka se otvara i gateway odmah vraća \texttt{503} (\emph{fail-fast}) umjesto da zatrpava servis koji ionako pada. Sklopka se sama zatvori kad se servis oporavi.
+  \item \textbf{Timeouts} -- ograničenja na uspostavu i trajanje konekcije prema backendima sprječavaju da zaglavljeni servis trajno drži otvorene resurse.
+\end{itemize}
+
+\subsection{Razina servisa}
+
+\begin{itemize}
+  \item \textbf{booking $\rightarrow$ Redis}: konekcija ima socket timeoute; upis u red štiti se ponavljanjem uz \emph{eksponencijalni backoff} (0,1 $\rightarrow$ 0,2 $\rightarrow$ 0,4 s) te \emph{in-process} circuit breakerom. Kod nedostupnog Redisa servis vraća \texttt{503} s \texttt{Retry-After} zaglavljem (a ne \texttt{500}), čime se ostvaruje \emph{graceful degradation}.
+  \item \textbf{damage $\rightarrow$ S3}: boto3 klijent konfiguriran je s connect/read timeoutima i automatskim ponavljanjem (\emph{standard} mode, do tri pokušaja uz backoff).
+  \item \textbf{mail-worker} (pouzdana razmjena poruka):
+  \begin{itemize}
+    \item \emph{Reliable queue} -- poruka se atomarno premješta iz glavnog reda u \texttt{processing} listu naredbom \texttt{BRPOPLPUSH}. Ako worker padne usred obrade, poruka preživi u \texttt{processing} listi i pri sljedećem se pokretanju vraća u red (\emph{crash recovery}) -- nema izgubljene obrade.
+    \item \emph{Dead-letter queue} (\texttt{email\_queue\_dead}) -- poruke koje se ne mogu obraditi (neispravan JSON, nedostaje e-mail) ili su iscrpile dopušteni broj pokušaja odlažu se u DLQ umjesto da blokiraju red.
+    \item \emph{Retry brojač} -- prolazne greške slanja ponavljaju se do \texttt{MAX\_ATTEMPTS} (3), nakon čega poruka ide u DLQ.
+    \item \emph{Idempotentnost} -- skup obrađenih identifikatora (\texttt{processed\_bookings}) osigurava da se mail za istu rezervaciju ne pošalje dvaput, čak i ako se poruka ponovno pojavi nakon oporavka (semantika \emph{at-least-once} + idempotentni potrošač).
+  \end{itemize}
+\end{itemize}
+
+Ovi mehanizmi zajedno čine da pojedinačni kvar (pad replike, kratkotrajna nedostupnost Redisa, neispravna poruka) ne ruši cijeli sustav, nego se lokalizira i automatski sanira.
 
 % ========================================================================
 \section{Struktura projekta}
@@ -641,6 +733,6 @@ Kroz ovaj projekt pokazao sam kako se jedan veći sustav može razbiti na neovis
 
 Korištenjem tri različita protokola -- REST, gRPC i Redis queue -- vidljivo je da nema jednog rješenja koje odgovara svim scenarijima. REST je jednostavan za CRUD i standardnu komunikaciju, gRPC ima smisla gdje je overhead JSON-a problematičan, a message queue rješava asinkronu obradu bez blokiranja.
 
-Sustav se pokreće jednom naredbom i ne zahtijeva oblačnu infrastrukturu zahvaljujući LocalStacku. Sentry integracija pokrila je sve razine, od backenda do frontenda, što bi u produkcijskom okruženju bila osnova za dijagnostiku. Arhitektura je relativno lako proširiva -- novi servis dodaje se kao novi kontejner u mrežu, bez diranja postojećih.
+Sustav se pokreće jednom naredbom i ne zahtijeva cloud infrastrukturu zahvaljujući LocalStacku. Sentry integracija pokrila je sve razine, od backenda do frontenda, što bi u produkcijskom okruženju bila osnova za dijagnostiku. Arhitektura je relativno lako proširiva -- novi servis dodaje se kao novi kontejner u mrežu, bez diranja postojećih.
 
 \end{document}
